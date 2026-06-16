@@ -11,7 +11,8 @@ export default function IntegrationsPage() {
       <pre>{`agentfence integrations list
 agentfence integrations show codex --format shell
 agentfence integrations show claude-code --format powershell
-agentfence integrations show generic-mcp --format json`}</pre>
+agentfence integrations show generic-mcp --format json
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force`}</pre>
       <h2>Codex</h2>
       <pre>{`agentfence init --preset developer --project codex-project
 agentfence run --actor codex -- codex`}</pre>

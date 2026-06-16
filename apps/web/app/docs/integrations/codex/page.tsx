@@ -9,7 +9,8 @@ export default function CodexIntegrationPage() {
       <pre>{`agentfence init --preset developer --project codex-project
 agentfence run --actor codex -- codex`}</pre>
       <h2>Profile</h2>
-      <pre>{`agentfence integrations show codex --format shell`}</pre>
+      <pre>{`agentfence integrations show codex --format shell
+agentfence integrations install codex --format shell --output-dir .agentfence/wrappers --force`}</pre>
       <h2>MCP</h2>
       <pre>{`agentfence mcp proxy \\
   --server github \\

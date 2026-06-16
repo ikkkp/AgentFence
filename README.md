@@ -117,6 +117,7 @@ agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude
 agentfence integrations list
 agentfence integrations show codex --format shell
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
 agentfence audit report --format markdown --output audit-report.md

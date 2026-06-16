@@ -20,7 +20,10 @@ agentfence integrations list
 agentfence integrations show codex --format shell
 agentfence integrations show claude-code --format powershell
 agentfence integrations show generic-mcp --format json
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force
 ```
+
+Install writes a reusable wrapper script. Shell wrappers forward extra arguments with `"$@"`; PowerShell wrappers forward remaining arguments with `@AgentFenceArgs`.
 
 Detailed guides:
 

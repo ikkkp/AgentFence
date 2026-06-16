@@ -373,6 +373,15 @@ enum IntegrationCommands {
         #[arg(long, default_value = "json")]
         format: IntegrationFormat,
     },
+    Install {
+        profile: IntegrationProfile,
+        #[arg(long, default_value = ".agentfence/wrappers")]
+        output_dir: PathBuf,
+        #[arg(long, default_value = "shell")]
+        format: IntegrationFormat,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1584,9 +1593,34 @@ fn integrations_command(command: IntegrationCommands) -> Result<ExitCode> {
                     println!("{}", serde_json::to_string_pretty(&integration_json(spec))?);
                 }
                 IntegrationFormat::Shell | IntegrationFormat::PowerShell => {
-                    print_integration_script(spec, format);
+                    println!("{}", integration_script(spec, format)?);
                 }
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        IntegrationCommands::Install {
+            profile,
+            output_dir,
+            format,
+            force,
+        } => {
+            if matches!(format, IntegrationFormat::Json) {
+                bail!("integration install requires --format shell or --format powershell");
+            }
+            let spec = integration_profile_spec(profile);
+            fs::create_dir_all(&output_dir)
+                .with_context(|| format!("failed to create {}", output_dir.display()))?;
+            let output = output_dir.join(integration_wrapper_filename(spec, format));
+            if output.exists() && !force {
+                bail!(
+                    "{} already exists; rerun with --force to replace it",
+                    output.display()
+                );
+            }
+            fs::write(&output, integration_script(spec, format)?)
+                .with_context(|| format!("failed to write wrapper {}", output.display()))?;
+            make_wrapper_executable(&output)?;
+            println!("created integration wrapper {}", output.display());
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -1685,16 +1719,27 @@ fn integration_json(spec: IntegrationProfileSpec) -> serde_json::Value {
     value
 }
 
-fn print_integration_script(spec: IntegrationProfileSpec, format: IntegrationFormat) {
+fn integration_script(spec: IntegrationProfileSpec, format: IntegrationFormat) -> Result<String> {
+    if matches!(format, IntegrationFormat::Json) {
+        bail!("JSON profiles cannot be rendered as wrapper scripts");
+    }
     let comment = match format {
         IntegrationFormat::PowerShell => "#",
         IntegrationFormat::Shell | IntegrationFormat::Json => "#",
     };
-    println!("{comment} AgentFence {} profile", spec.slug);
-    println!("{comment} Recommended preset: {}", spec.recommended_preset);
+    let mut output = String::new();
+    if matches!(format, IntegrationFormat::Shell) {
+        output.push_str("#!/usr/bin/env sh\nset -e\n");
+    }
+    output.push_str(&format!("{comment} AgentFence {} profile\n", spec.slug));
+    output.push_str(&format!(
+        "{comment} Recommended preset: {}\n",
+        spec.recommended_preset
+    ));
     if let Some(project) = spec.init_project {
-        println!(
-            "{}",
+        output.push_str(&format!("{comment} Run once:\n"));
+        output.push_str(&format!(
+            "{comment} {}\n",
             quote_command(
                 &[
                     "agentfence",
@@ -1706,9 +1751,50 @@ fn print_integration_script(spec: IntegrationProfileSpec, format: IntegrationFor
                 ],
                 format,
             )
-        );
+        ));
     }
-    println!("{}", quote_command(spec.command, format));
+
+    let command = quote_command(spec.command, format);
+    match format {
+        IntegrationFormat::Shell => {
+            output.push_str(&format!("exec {command} \"$@\"\n"));
+        }
+        IntegrationFormat::PowerShell => {
+            output.push_str(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AgentFenceArgs)\n",
+            );
+            output.push_str(&format!("& {command} @AgentFenceArgs\n"));
+            output.push_str("exit $LASTEXITCODE\n");
+        }
+        IntegrationFormat::Json => unreachable!("checked above"),
+    }
+    Ok(output)
+}
+
+fn integration_wrapper_filename(spec: IntegrationProfileSpec, format: IntegrationFormat) -> String {
+    match format {
+        IntegrationFormat::PowerShell => format!("agentfence-{}.ps1", spec.slug),
+        IntegrationFormat::Shell => format!("agentfence-{}", spec.slug),
+        IntegrationFormat::Json => format!("agentfence-{}.json", spec.slug),
+    }
+}
+
+fn make_wrapper_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path)
+            .with_context(|| format!("failed to stat wrapper {}", path.display()))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .with_context(|| format!("failed to mark wrapper executable {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 fn quote_command(args: &[&str], format: IntegrationFormat) -> String {
@@ -2894,6 +2980,33 @@ mod tests {
         assert_eq!(
             quote_arg("can't", IntegrationFormat::PowerShell),
             "'can''t'"
+        );
+    }
+
+    #[test]
+    fn renders_integration_wrapper_scripts() {
+        let codex = integration_profile_spec(IntegrationProfile::Codex);
+        let shell = integration_script(codex, IntegrationFormat::Shell).expect("shell script");
+        assert!(shell.starts_with("#!/usr/bin/env sh"));
+        assert!(shell.contains("exec agentfence run --actor codex -- codex \"$@\""));
+
+        let powershell =
+            integration_script(codex, IntegrationFormat::PowerShell).expect("powershell script");
+        assert!(powershell.contains("[string[]]$AgentFenceArgs"));
+        assert!(powershell.contains("& agentfence run --actor codex -- codex @AgentFenceArgs"));
+    }
+
+    #[test]
+    fn names_integration_wrapper_files_by_format() {
+        let codex = integration_profile_spec(IntegrationProfile::Codex);
+
+        assert_eq!(
+            integration_wrapper_filename(codex, IntegrationFormat::Shell),
+            "agentfence-codex"
+        );
+        assert_eq!(
+            integration_wrapper_filename(codex, IntegrationFormat::PowerShell),
+            "agentfence-codex.ps1"
         );
     }
 

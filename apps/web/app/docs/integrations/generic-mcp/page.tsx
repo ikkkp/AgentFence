@@ -6,6 +6,7 @@ export default function GenericMcpIntegrationPage() {
       <p>
         Put AgentFence between the MCP client and upstream server to enforce tools, resources, prompts, approvals, and audit.
       </p>
+      <pre>{`agentfence integrations install generic-mcp --format shell --output-dir .agentfence/wrappers --force`}</pre>
       <h2>Stdio</h2>
       <pre>{`agentfence mcp proxy \\
   --server github \\
