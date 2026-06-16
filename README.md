@@ -12,7 +12,7 @@ This repository now contains the first implementation slice from the roadmap:
 - `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, MCP checks, MCP stdio proxying, MCP rate limits, and audit log reads.
 - `agentfenced` local HTTP daemon with health, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
-- Tauri + React desktop UI shell for dashboard, approvals, policy preview, audit, MCP, and skill controls.
+- Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
 - Next.js website shell with homepage, download, security, and docs pages.
 - CI workflow for Rust and web verification.
 - Release workflow for CLI, daemon, and Tauri desktop artifacts.

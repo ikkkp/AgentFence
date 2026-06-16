@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import type { ApprovalRequest, AuditEvent, ShellSimulationOutput } from "@agentfence/types";
 import {
@@ -18,6 +18,8 @@ import "./styles.css";
 
 const daemonBase = "http://127.0.0.1:37421";
 type AuditDecisionFilter = "all" | "allow" | "deny" | "ask";
+type PolicyDiff = { hasChanges: boolean; summary: string; text: string };
+type DiffOperation = { type: "same" | "add" | "remove"; text: string };
 
 const fallbackApprovals: ApprovalRequest[] = [
   {
@@ -99,6 +101,7 @@ function App() {
   const [policyInstruction, setPolicyInstruction] = useState("allow tests but ask before dependency installs");
   const [policyProposal, setPolicyProposal] = useState(policyPreview);
   const [policyText, setPolicyText] = useState(policyPreview);
+  const [savedPolicyText, setSavedPolicyText] = useState(policyPreview);
   const [policyStatus, setPolicyStatus] = useState("Sample policy loaded");
   const [policyStatusKind, setPolicyStatusKind] = useState<"neutral" | "valid" | "invalid">("neutral");
   const [policyDirty, setPolicyDirty] = useState(false);
@@ -108,6 +111,10 @@ function App() {
   const [bundleDigest, setBundleDigest] = useState("not loaded");
   const [bundleSignature, setBundleSignature] = useState("not checked");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
+  const policyDiff = useMemo(
+    () => buildPolicyDiff(savedPolicyText, policyText),
+    [savedPolicyText, policyText]
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -206,12 +213,15 @@ function App() {
         return;
       }
       const policy = await response.json();
-      setPolicyText(JSON.stringify(policy, null, 2));
+      const formatted = JSON.stringify(policy, null, 2);
+      setPolicyText(formatted);
+      setSavedPolicyText(formatted);
       setPolicyStatus("Policy loaded from daemon");
       setPolicyStatusKind("valid");
       setPolicyDirty(false);
     } catch {
       setPolicyText(policyPreview);
+      setSavedPolicyText(policyPreview);
       setPolicyStatus("Daemon offline; showing sample policy");
       setPolicyStatusKind("neutral");
     }
@@ -282,6 +292,9 @@ function App() {
     }
     setPolicyStatus("Policy saved");
     setPolicyStatusKind("valid");
+    const saved = JSON.stringify(parsed, null, 2);
+    setPolicyText(saved);
+    setSavedPolicyText(saved);
     setPolicyDirty(false);
     await refreshBundleDigest();
   }
@@ -424,14 +437,21 @@ function App() {
               className="policy-editor"
               value={policyText}
               onChange={(event) => {
-                setPolicyText(event.target.value);
-                setPolicyDirty(true);
-                setPolicyStatus("Policy has unsaved changes");
+                const nextPolicyText = event.target.value;
+                const changed = nextPolicyText !== savedPolicyText;
+                setPolicyText(nextPolicyText);
+                setPolicyDirty(changed);
+                setPolicyStatus(changed ? "Policy has unsaved changes" : "Policy matches loaded version");
                 setPolicyStatusKind("neutral");
               }}
               aria-label="Policy JSON"
               spellCheck={false}
             />
+            <div className="diff-toolbar">
+              <span>Diff preview</span>
+              <strong>{policyDiff.summary}</strong>
+            </div>
+            <pre className={`policy policy-diff ${policyDiff.hasChanges ? "" : "policy-diff-empty"}`}>{policyDiff.text}</pre>
             <div className={`status status-${policyStatusKind}`}>{policyStatus}</div>
           </Panel>
 
@@ -605,6 +625,101 @@ function parseCommandLine(value: string) {
     }
     return item;
   });
+}
+
+function buildPolicyDiff(before: string, after: string): PolicyDiff {
+  if (before === after) {
+    return {
+      hasChanges: false,
+      summary: "No changes",
+      text: "No policy changes."
+    };
+  }
+
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const operations = diffLines(beforeLines, afterLines);
+  const added = operations.filter((operation) => operation.type === "add").length;
+  const removed = operations.filter((operation) => operation.type === "remove").length;
+
+  return {
+    hasChanges: true,
+    summary: `+${added} / -${removed}`,
+    text: renderDiff(operations)
+  };
+}
+
+function diffLines(before: string[], after: string[]): DiffOperation[] {
+  const table = Array.from({ length: before.length + 1 }, () => Array(after.length + 1).fill(0));
+
+  for (let beforeIndex = before.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = after.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      table[beforeIndex][afterIndex] = before[beforeIndex] === after[afterIndex]
+        ? table[beforeIndex + 1][afterIndex + 1] + 1
+        : Math.max(table[beforeIndex + 1][afterIndex], table[beforeIndex][afterIndex + 1]);
+    }
+  }
+
+  const operations: DiffOperation[] = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+
+  while (beforeIndex < before.length && afterIndex < after.length) {
+    if (before[beforeIndex] === after[afterIndex]) {
+      operations.push({ type: "same", text: before[beforeIndex] });
+      beforeIndex += 1;
+      afterIndex += 1;
+    } else if (table[beforeIndex + 1][afterIndex] >= table[beforeIndex][afterIndex + 1]) {
+      operations.push({ type: "remove", text: before[beforeIndex] });
+      beforeIndex += 1;
+    } else {
+      operations.push({ type: "add", text: after[afterIndex] });
+      afterIndex += 1;
+    }
+  }
+
+  while (beforeIndex < before.length) {
+    operations.push({ type: "remove", text: before[beforeIndex] });
+    beforeIndex += 1;
+  }
+
+  while (afterIndex < after.length) {
+    operations.push({ type: "add", text: after[afterIndex] });
+    afterIndex += 1;
+  }
+
+  return operations;
+}
+
+function renderDiff(operations: DiffOperation[]) {
+  const output: string[] = [];
+  let sameRun: string[] = [];
+
+  const flushSameRun = () => {
+    if (sameRun.length === 0) {
+      return;
+    }
+    if (sameRun.length <= 4) {
+      output.push(...sameRun.map((line) => `  ${line}`));
+    } else {
+      output.push(...sameRun.slice(0, 2).map((line) => `  ${line}`));
+      output.push(`  ... ${sameRun.length - 4} unchanged lines ...`);
+      output.push(...sameRun.slice(-2).map((line) => `  ${line}`));
+    }
+    sameRun = [];
+  };
+
+  for (const operation of operations) {
+    if (operation.type === "same") {
+      sameRun.push(operation.text);
+      continue;
+    }
+    flushSameRun();
+    output.push(`${operation.type === "add" ? "+" : "-"} ${operation.text}`);
+  }
+
+  flushSameRun();
+  return output.join("\n");
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

@@ -341,6 +341,39 @@ nav a:hover {
   border-color: #4f9c68;
 }
 
+.diff-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 12px 0 8px;
+}
+
+.diff-toolbar span {
+  color: #607168;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.diff-toolbar strong {
+  background: #eef3f6;
+  border-radius: 999px;
+  color: #45616d;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.policy-diff {
+  max-height: 190px;
+  white-space: pre;
+}
+
+.policy-diff-empty {
+  background: #f8faf7;
+  border: 1px dashed #cfdacf;
+  color: #607168;
+}
+
 .status {
   border-radius: 8px;
   font-size: 13px;
