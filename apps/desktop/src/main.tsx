@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
-import type { ApprovalRequest, AuditEvent, ShellSimulationOutput } from "@agentfence/types";
+import type {
+  ApprovalRequest,
+  AuditEvent,
+  JsonPatchOperation,
+  PolicySuggestion,
+  PolicySuggestionReport,
+  ShellSimulationOutput
+} from "@agentfence/types";
 import {
   Activity,
   Bell,
@@ -108,6 +115,8 @@ function App() {
   const [policyStatus, setPolicyStatus] = useState("Sample policy loaded");
   const [policyStatusKind, setPolicyStatusKind] = useState<"neutral" | "valid" | "invalid">("neutral");
   const [policyDirty, setPolicyDirty] = useState(false);
+  const [policySuggestions, setPolicySuggestions] = useState<PolicySuggestion[]>([]);
+  const [suggestionStatus, setSuggestionStatus] = useState("Suggestions not loaded");
   const [simulatorInput, setSimulatorInput] = useState("git status https://transfer.sh/file");
   const [simulatorResult, setSimulatorResult] = useState<ShellSimulationOutput | null>(null);
   const [simulatorStatus, setSimulatorStatus] = useState("Ready");
@@ -136,6 +145,7 @@ function App() {
     }
     refreshApprovals();
     refreshPolicy();
+    refreshPolicySuggestions();
     refreshBundleDigest();
     const timer = window.setInterval(() => {
       refreshApprovals();
@@ -244,6 +254,44 @@ function App() {
       setPolicyProposal(JSON.stringify(await response.json(), null, 2));
     } catch {
       setPolicyProposal(policyPreview);
+    }
+  }
+
+  async function refreshPolicySuggestions() {
+    setSuggestionStatus("Scanning audit");
+    try {
+      const params = new URLSearchParams({ threshold: "3", limit: "1000" });
+      const response = await fetch(`${daemonBase}/policy/suggestions?${params.toString()}`);
+      if (!response.ok) {
+        setSuggestionStatus("Suggestion scan failed");
+        return;
+      }
+      const report = (await response.json()) as PolicySuggestionReport;
+      setPolicySuggestions(report.suggestions ?? []);
+      setSuggestionStatus(
+        report.suggestions.length > 0
+          ? `${report.suggestions.length} suggestion${report.suggestions.length === 1 ? "" : "s"}`
+          : "No suggestions"
+      );
+    } catch {
+      setPolicySuggestions([]);
+      setSuggestionStatus("Daemon offline");
+    }
+  }
+
+  function applySuggestion(suggestion: PolicySuggestion) {
+    try {
+      const parsed = JSON.parse(policyText);
+      const patched = applyJsonPatch(parsed, suggestion.proposal.operations);
+      const formatted = JSON.stringify(patched, null, 2);
+      setPolicyText(formatted);
+      setPolicyDirty(formatted !== savedPolicyText);
+      setPolicyProposal(JSON.stringify(suggestion.proposal, null, 2));
+      setPolicyStatus(`Applied suggestion: ${suggestion.title}`);
+      setPolicyStatusKind("neutral");
+    } catch (error) {
+      setPolicyStatus(error instanceof Error ? error.message : "Suggestion patch failed");
+      setPolicyStatusKind("invalid");
     }
   }
 
@@ -457,6 +505,40 @@ function App() {
               <button onClick={draftPolicyPatch}>Draft</button>
             </div>
             <pre className="policy policy-patch">{policyProposal}</pre>
+            <div className="suggestion-toolbar">
+              <span>Audit suggestions</span>
+              <strong>{suggestionStatus}</strong>
+              <button className="text-button" onClick={refreshPolicySuggestions}>
+                <RefreshCw size={15} />Scan
+              </button>
+            </div>
+            {policySuggestions.length > 0 && (
+              <div className="suggestion-list">
+                {policySuggestions.map((suggestion) => (
+                  <article className="suggestion-item" key={suggestion.id}>
+                    <div>
+                      <div className="suggestion-heading">
+                        <strong>{suggestion.title}</strong>
+                        <span>{suggestion.eventCount}x</span>
+                      </div>
+                      <code>{suggestion.subject}</code>
+                      <p>{suggestion.description}</p>
+                    </div>
+                    <div className="suggestion-actions">
+                      <button
+                        className="text-button"
+                        onClick={() => setPolicyProposal(JSON.stringify(suggestion.proposal, null, 2))}
+                      >
+                        <FileJson size={15} />Preview
+                      </button>
+                      <button className="text-button primary" onClick={() => applySuggestion(suggestion)}>
+                        <Check size={15} />Apply
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
             <div className="policy-toolbar">
               <button className="text-button" onClick={refreshPolicy}><RefreshCw size={15} />Reload</button>
               <button className="text-button" onClick={validatePolicy}><CheckCircle2 size={15} />Validate</button>
@@ -621,6 +703,7 @@ function App() {
                   refreshApprovals();
                   refreshAudit();
                   refreshPolicy();
+                  refreshPolicySuggestions();
                   refreshBundleDigest();
                 }}>
                   <RefreshCw size={15} />Refresh
@@ -719,6 +802,122 @@ function parseCommandLine(value: string) {
     }
     return item;
   });
+}
+
+function applyJsonPatch(root: unknown, operations: JsonPatchOperation[]) {
+  let next = cloneJson(root);
+  for (const operation of operations) {
+    if (operation.op === "add") {
+      next = jsonPointerAdd(next, operation.path, cloneJson(operation.value));
+    } else if (operation.op === "replace") {
+      next = jsonPointerReplace(next, operation.path, cloneJson(operation.value));
+    } else if (operation.op === "test") {
+      jsonPointerTest(next, operation.path, operation.value);
+    } else {
+      throw new Error(`Unsupported JSON Patch operation ${operation.op}`);
+    }
+  }
+  return next;
+}
+
+function jsonPointerAdd(root: unknown, path: string, value: unknown) {
+  const tokens = jsonPointerTokens(path);
+  if (tokens.length === 0) {
+    return value;
+  }
+  const { parent, key } = jsonPointerParent(root, tokens);
+  if (Array.isArray(parent)) {
+    if (key === "-") {
+      parent.push(value);
+      return root;
+    }
+    const index = Number.parseInt(key, 10);
+    if (!Number.isInteger(index) || index < 0 || index > parent.length) {
+      throw new Error(`Invalid JSON pointer array index ${key}`);
+    }
+    parent.splice(index, 0, value);
+    return root;
+  }
+  parent[key] = value;
+  return root;
+}
+
+function jsonPointerReplace(root: unknown, path: string, value: unknown) {
+  const tokens = jsonPointerTokens(path);
+  if (tokens.length === 0) {
+    return value;
+  }
+  const { parent, key } = jsonPointerParent(root, tokens);
+  if (Array.isArray(parent)) {
+    const index = Number.parseInt(key, 10);
+    if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
+      throw new Error(`JSON pointer array index ${key} was not found`);
+    }
+    parent[index] = value;
+    return root;
+  }
+  if (!(key in parent)) {
+    throw new Error(`JSON pointer object key ${key} was not found`);
+  }
+  parent[key] = value;
+  return root;
+}
+
+function jsonPointerTest(root: unknown, path: string, expected: unknown) {
+  const actual = jsonPointerGet(root, jsonPointerTokens(path));
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`JSON pointer test failed at ${path}`);
+  }
+}
+
+function jsonPointerGet(root: unknown, tokens: string[]) {
+  let current = root;
+  for (const token of tokens) {
+    if (Array.isArray(current)) {
+      const index = Number.parseInt(token, 10);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        throw new Error(`JSON pointer array index ${token} was not found`);
+      }
+      current = current[index];
+    } else if (isRecord(current) && token in current) {
+      current = current[token];
+    } else {
+      throw new Error(`JSON pointer object key ${token} was not found`);
+    }
+  }
+  return current;
+}
+
+function jsonPointerParent(root: unknown, tokens: string[]) {
+  const parent = jsonPointerGet(root, tokens.slice(0, -1));
+  if (!Array.isArray(parent) && !isRecord(parent)) {
+    throw new Error("JSON pointer parent is not an array or object");
+  }
+  return {
+    parent,
+    key: tokens[tokens.length - 1]
+  };
+}
+
+function jsonPointerTokens(path: string) {
+  if (path === "") {
+    return [];
+  }
+  if (!path.startsWith("/")) {
+    throw new Error(`JSON pointer must start with /: ${path}`);
+  }
+  return path
+    .split("/")
+    .slice(1)
+    .map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~"));
+}
+
+function cloneJson(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function buildPolicyDiff(before: string, after: string): PolicyDiff {

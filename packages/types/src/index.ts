@@ -154,3 +154,31 @@ export interface ShellSimulationOutput {
   networkDecisions?: ShellSimulationNetworkDecision[];
   explanation: string[];
 }
+
+export interface JsonPatchOperation {
+  op: "add" | "replace" | "test";
+  path: string;
+  value: unknown;
+}
+
+export interface PolicyPatchProposal {
+  summary: string;
+  operations: JsonPatchOperation[];
+}
+
+export interface PolicySuggestion {
+  id: string;
+  title: string;
+  description: string;
+  eventCount: number;
+  action: string;
+  subject: string;
+  proposal: PolicyPatchProposal;
+}
+
+export interface PolicySuggestionReport {
+  summary: string;
+  threshold: number;
+  totalObservations: number;
+  suggestions: PolicySuggestion[];
+}

@@ -316,6 +316,86 @@ nav a:hover {
   max-height: 180px;
 }
 
+.suggestion-toolbar {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  margin: 12px 0;
+}
+
+.suggestion-toolbar span {
+  color: #607168;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.suggestion-toolbar strong {
+  background: #eef3f6;
+  border-radius: 999px;
+  color: #45616d;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.suggestion-item {
+  align-items: start;
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 11px;
+}
+
+.suggestion-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.suggestion-heading strong {
+  font-size: 14px;
+}
+
+.suggestion-heading span {
+  background: #fff2d8;
+  border-radius: 999px;
+  color: #8b5600;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+.suggestion-item code {
+  color: #17211c;
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.suggestion-item p {
+  color: #607168;
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+
+.suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .policy-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -685,7 +765,9 @@ th {
 
   .metrics,
   .grid,
-  .filter-row {
+  .filter-row,
+  .suggestion-item,
+  .suggestion-toolbar {
     grid-template-columns: 1fr;
   }
 
