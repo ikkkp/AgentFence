@@ -238,6 +238,31 @@ pre {
   margin-top: 32px;
 }
 
+.entry-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.entry {
+  background: #ffffff;
+  border: 1px solid #dfe6df;
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.entry h2 {
+  margin-top: 0;
+}
+
+.meta {
+  color: #277045;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
 .back {
   color: #277045;
   display: inline-block;
@@ -263,4 +288,3 @@ pre {
     font-size: 54px;
   }
 }
-

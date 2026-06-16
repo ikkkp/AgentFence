@@ -30,6 +30,8 @@ export default function HomePage() {
           <a href="/docs/quickstart">Docs</a>
           <a href="/docs/integrations">Integrations</a>
           <a href="/security">Security</a>
+          <a href="/changelog">Changelog</a>
+          <a href="/blog">Blog</a>
           <a href="/download">Download</a>
           <a className="button small" href="https://github.com/ikkkp/AgentFence">GitHub</a>
         </nav>
@@ -81,6 +83,7 @@ allow once? [y/N]`}</pre>
           <li><CheckCircle2 /> Desktop approval queue and policy editor</li>
           <li><CheckCircle2 /> MCP proxy, skill gates, and LLM policy assistant</li>
           <li><CheckCircle2 /> Codex, Claude Code, and generic MCP integration guides</li>
+          <li><CheckCircle2 /> Public changelog and blog foundation</li>
         </ul>
       </section>
     </main>

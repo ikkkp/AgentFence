@@ -23,7 +23,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 3 MCP proxy: stdio proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering, daemon-backed ask mode, rate limits, and audit events.
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, plus side-effect-free shell simulation and explanations.
-- Milestone 6 website/docs: homepage, download page, security page, quickstart, policy, MCP, and audit documentation.
+- Milestone 6 website/docs: homepage, download page, security page, changelog, blog foundation, quickstart, policy, MCP, and audit documentation.
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
 - Milestone 8 foundations: signed policy bundles, verification, import, and audit export.
 
