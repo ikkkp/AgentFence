@@ -4,6 +4,7 @@ import type {
   ApprovalRequest,
   AuditEvent,
   JsonPatchOperation,
+  PolicyPatchProposal,
   PolicySuggestion,
   PolicySuggestionReport,
   ShellSimulationOutput
@@ -112,6 +113,7 @@ function App() {
   const [auditDecisionFilter, setAuditDecisionFilter] = useState<AuditDecisionFilter>("all");
   const [policyInstruction, setPolicyInstruction] = useState("allow tests but ask before dependency installs");
   const [policyProposal, setPolicyProposal] = useState(policyPreview);
+  const [selectedPatchOperations, setSelectedPatchOperations] = useState<number[]>([]);
   const [policyText, setPolicyText] = useState(policyPreview);
   const [savedPolicyText, setSavedPolicyText] = useState(policyPreview);
   const [policyStatus, setPolicyStatus] = useState("Sample policy loaded");
@@ -132,6 +134,7 @@ function App() {
     () => buildPolicyDiff(savedPolicyText, policyText),
     [savedPolicyText, policyText]
   );
+  const reviewedProposal = useMemo(() => parsePolicyProposal(policyProposal), [policyProposal]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -256,9 +259,10 @@ function App() {
       if (!response.ok) {
         return;
       }
-      setPolicyProposal(JSON.stringify(await response.json(), null, 2));
+      setReviewedPolicyProposal((await response.json()) as PolicyPatchProposal);
     } catch {
       setPolicyProposal(policyPreview);
+      setSelectedPatchOperations([]);
     }
   }
 
@@ -291,7 +295,7 @@ function App() {
       const formatted = JSON.stringify(patched, null, 2);
       setPolicyText(formatted);
       setPolicyDirty(formatted !== savedPolicyText);
-      setPolicyProposal(JSON.stringify(suggestion.proposal, null, 2));
+      setReviewedPolicyProposal(suggestion.proposal);
       setPolicyStatus(`Applied suggestion: ${suggestion.title}`);
       setPolicyStatusKind("neutral");
     } catch (error) {
@@ -330,14 +334,68 @@ function App() {
       setPolicyText(formatted);
       setPolicyDirty(formatted !== savedPolicyText);
       setQuickRuleValue("");
-      setPolicyProposal(JSON.stringify({
+      setReviewedPolicyProposal({
         summary: `Added ${quickRuleScope} ${quickRuleDecision} rule for ${value}`,
         operations: []
-      }, null, 2));
+      });
       setPolicyStatus(`Added ${quickRuleScope} rule`);
       setPolicyStatusKind("neutral");
     } catch (error) {
       setPolicyStatus(error instanceof Error ? error.message : "Quick rule failed");
+      setPolicyStatusKind("invalid");
+    }
+  }
+
+  function setReviewedPolicyProposal(proposal: PolicyPatchProposal) {
+    setPolicyProposal(JSON.stringify(proposal, null, 2));
+    setSelectedPatchOperations(proposal.operations.map((_, index) => index));
+  }
+
+  function togglePatchOperation(index: number) {
+    setSelectedPatchOperations((current) => {
+      if (current.includes(index)) {
+        return current.filter((item) => item !== index);
+      }
+      return [...current, index].sort((left, right) => left - right);
+    });
+  }
+
+  function selectAllPatchOperations() {
+    if (!reviewedProposal) {
+      return;
+    }
+    setSelectedPatchOperations(reviewedProposal.operations.map((_, index) => index));
+  }
+
+  function clearPatchOperations() {
+    setSelectedPatchOperations([]);
+  }
+
+  function applySelectedPatchOperations() {
+    if (!reviewedProposal) {
+      setPolicyStatus("No patch proposal to apply");
+      setPolicyStatusKind("invalid");
+      return;
+    }
+    const operations = reviewedProposal.operations.filter((_, index) =>
+      selectedPatchOperations.includes(index)
+    );
+    if (operations.length === 0) {
+      setPolicyStatus("No patch operations selected");
+      setPolicyStatusKind("invalid");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(policyText);
+      const patched = applyJsonPatch(parsed, operations);
+      const formatted = JSON.stringify(patched, null, 2);
+      setPolicyText(formatted);
+      setPolicyDirty(formatted !== savedPolicyText);
+      setPolicyStatus(`Applied ${operations.length} patch operation${operations.length === 1 ? "" : "s"}`);
+      setPolicyStatusKind("neutral");
+    } catch (error) {
+      setPolicyStatus(error instanceof Error ? error.message : "Patch apply failed");
       setPolicyStatusKind("invalid");
     }
   }
@@ -552,6 +610,33 @@ function App() {
               <button onClick={draftPolicyPatch}>Draft</button>
             </div>
             <pre className="policy policy-patch">{policyProposal}</pre>
+            {reviewedProposal && reviewedProposal.operations.length > 0 && (
+              <div className="patch-review" aria-label="Patch review">
+                <div className="patch-review-header">
+                  <span>Patch review</span>
+                  <strong>{selectedPatchOperations.length}/{reviewedProposal.operations.length}</strong>
+                  <button className="text-button" onClick={selectAllPatchOperations}>All</button>
+                  <button className="text-button" onClick={clearPatchOperations}>None</button>
+                  <button className="text-button primary" onClick={applySelectedPatchOperations}>
+                    <Check size={15} />Apply selected
+                  </button>
+                </div>
+                <div className="patch-operation-list">
+                  {reviewedProposal.operations.map((operation, index) => (
+                    <label className="patch-operation" key={`${operation.op}-${operation.path}-${index}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedPatchOperations.includes(index)}
+                        onChange={() => togglePatchOperation(index)}
+                      />
+                      <span>{operation.op}</span>
+                      <code>{operation.path}</code>
+                      <small>{formatPatchValue(operation.value)}</small>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="suggestion-toolbar">
               <span>Audit suggestions</span>
               <strong>{suggestionStatus}</strong>
@@ -574,7 +659,7 @@ function App() {
                     <div className="suggestion-actions">
                       <button
                         className="text-button"
-                        onClick={() => setPolicyProposal(JSON.stringify(suggestion.proposal, null, 2))}
+                        onClick={() => setReviewedPolicyProposal(suggestion.proposal)}
                       >
                         <FileJson size={15} />Preview
                       </button>
@@ -894,6 +979,40 @@ function parseCommandLine(value: string) {
     }
     return item;
   });
+}
+
+function parsePolicyProposal(value: string): PolicyPatchProposal | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.operations)) {
+      return null;
+    }
+    const operations = parsed.operations.filter(isJsonPatchOperation);
+    if (operations.length !== parsed.operations.length) {
+      return null;
+    }
+    return {
+      summary: parsed.summary,
+      operations
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isJsonPatchOperation(value: unknown): value is JsonPatchOperation {
+  return isRecord(value)
+    && (value.op === "add" || value.op === "replace" || value.op === "test")
+    && typeof value.path === "string"
+    && "value" in value;
+}
+
+function formatPatchValue(value: unknown) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!text) {
+    return "";
+  }
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text;
 }
 
 function addShellQuickRule(policy: Record<string, unknown>, decision: QuickRuleDecision, command: string) {

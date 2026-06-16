@@ -316,6 +316,81 @@ nav a:hover {
   max-height: 180px;
 }
 
+.patch-review {
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  margin: 12px 0;
+  padding: 11px;
+}
+
+.patch-review-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.patch-review-header span {
+  color: #607168;
+  font-size: 13px;
+  font-weight: 700;
+  margin-right: auto;
+}
+
+.patch-review-header strong {
+  background: #eef3f6;
+  border-radius: 999px;
+  color: #45616d;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.patch-operation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.patch-operation {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 72px minmax(140px, 0.8fr) minmax(180px, 1.2fr);
+  min-height: 42px;
+  padding: 9px 10px;
+}
+
+.patch-operation input {
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.patch-operation span {
+  background: #eef3f6;
+  border-radius: 999px;
+  color: #45616d;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+  text-align: center;
+}
+
+.patch-operation code,
+.patch-operation small {
+  color: #17211c;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.patch-operation small {
+  color: #607168;
+}
+
 .suggestion-toolbar {
   align-items: center;
   display: grid;
@@ -816,6 +891,7 @@ th {
   .filter-row,
   .suggestion-item,
   .suggestion-toolbar,
+  .patch-operation,
   .quick-rule-grid {
     grid-template-columns: 1fr;
   }
