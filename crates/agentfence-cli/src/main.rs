@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
 use agentfence_policy::{
-    Decision, DecisionResult, FilesystemRequest, NetworkRequest, PolicyBundle, PolicyBundleKeyPair,
-    PolicyPreset, ShellRequest, SkillRequest, apply_policy_patch, create_policy_bundle,
+    ActorPolicy, Decision, DecisionResult, FilesystemRequest, McpServerPolicy, NetworkRequest,
+    Policy, PolicyBundle, PolicyBundleKeyPair, PolicyPreset, RateLimitPolicy, ShellMatch,
+    ShellRequest, ShellRule, SkillRequest, apply_policy_patch, create_policy_bundle,
     discover_policy, evaluate_filesystem, evaluate_network, evaluate_shell, evaluate_skill,
     generate_policy_bundle_keypair, load_policy, policy_schema_json, preset_policy,
     propose_policy_patch, save_policy, sign_policy_bundle, verify_policy_bundle,
@@ -236,10 +237,46 @@ enum PolicyCommands {
         yes: bool,
         instruction: Vec<String>,
     },
+    Template {
+        #[command(subcommand)]
+        command: PolicyTemplateCommands,
+    },
     Bundle {
         #[command(subcommand)]
         command: PolicyBundleCommands,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyTemplateCommands {
+    List,
+    Show {
+        template: PolicyTemplate,
+    },
+    Export {
+        template: PolicyTemplate,
+        #[arg(long, default_value = "agentfence.policy.json")]
+        output: PathBuf,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PolicyTemplate {
+    EngineeringDefault,
+    ReadOnlyAudit,
+    ReleaseGuard,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PolicyTemplateSpec {
+    slug: &'static str,
+    title: &'static str,
+    description: &'static str,
+    preset: PolicyPreset,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1144,7 +1181,185 @@ fn policy_command(command: PolicyCommands) -> Result<ExitCode> {
             println!("updated {}", path.display());
             Ok(ExitCode::SUCCESS)
         }
+        PolicyCommands::Template { command } => policy_template_command(command),
         PolicyCommands::Bundle { command } => policy_bundle_command(command),
+    }
+}
+
+fn policy_template_command(command: PolicyTemplateCommands) -> Result<ExitCode> {
+    match command {
+        PolicyTemplateCommands::List => {
+            for template in [
+                PolicyTemplate::EngineeringDefault,
+                PolicyTemplate::ReadOnlyAudit,
+                PolicyTemplate::ReleaseGuard,
+            ] {
+                let spec = policy_template_spec(template);
+                println!(
+                    "{:<20} preset={:<16} {}",
+                    spec.slug,
+                    policy_preset_name(spec.preset),
+                    spec.description
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyTemplateCommands::Show { template } => {
+            let spec = policy_template_spec(template);
+            let policy = build_policy_template(template, None);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "template": spec.slug,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "preset": policy_preset_name(spec.preset),
+                    "policy": policy
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyTemplateCommands::Export {
+            template,
+            output,
+            project,
+            force,
+        } => {
+            if output.exists() && !force {
+                bail!(
+                    "{} already exists; rerun with --force to replace it",
+                    output.display()
+                );
+            }
+            let policy = build_policy_template(template, project);
+            save_policy(&output, &policy)?;
+            println!("created policy template {}", output.display());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn policy_template_spec(template: PolicyTemplate) -> PolicyTemplateSpec {
+    match template {
+        PolicyTemplate::EngineeringDefault => PolicyTemplateSpec {
+            slug: "engineering-default",
+            title: "Engineering Default",
+            description: "Balanced local development policy for coding agents.",
+            preset: PolicyPreset::Developer,
+        },
+        PolicyTemplate::ReadOnlyAudit => PolicyTemplateSpec {
+            slug: "read-only-audit",
+            title: "Read-Only Audit",
+            description: "Read-only policy with strict writes and auditable inspection.",
+            preset: PolicyPreset::ReadOnly,
+        },
+        PolicyTemplate::ReleaseGuard => PolicyTemplateSpec {
+            slug: "release-guard",
+            title: "Release Guard",
+            description: "Stricter policy for release branches and production-sensitive work.",
+            preset: PolicyPreset::Strict,
+        },
+    }
+}
+
+fn build_policy_template(template: PolicyTemplate, project: Option<String>) -> Policy {
+    let spec = policy_template_spec(template);
+    let mut policy = preset_policy(spec.preset, project.or_else(|| Some(spec.slug.to_string())));
+    policy.actors.insert("codex".to_string(), actor("standard"));
+    policy
+        .actors
+        .insert("claude-code".to_string(), actor("standard"));
+
+    match template {
+        PolicyTemplate::EngineeringDefault => {
+            policy.shell.rules.push(ShellRule {
+                id: "ask-git-history-rewrite".to_string(),
+                description: Some("Ask before rewriting repository history.".to_string()),
+                r#match: ShellMatch {
+                    commands: vec![
+                        "git reset".to_string(),
+                        "git clean".to_string(),
+                        "git push --force".to_string(),
+                    ],
+                    patterns: Vec::new(),
+                    risks: Vec::new(),
+                },
+                decision: Decision::Ask,
+                reason: Some("repository history changes require review".to_string()),
+            });
+            configure_github_mcp(&mut policy, Decision::Ask);
+        }
+        PolicyTemplate::ReadOnlyAudit => {
+            policy.default_decision = Decision::Deny;
+            policy.audit.enabled = true;
+            policy.approval.remember_choices = false;
+            configure_github_mcp(&mut policy, Decision::Deny);
+        }
+        PolicyTemplate::ReleaseGuard => {
+            policy.default_decision = Decision::Ask;
+            policy.network.default_decision = Decision::Deny;
+            policy.skills.deny.push("release-publish".to_string());
+            policy.shell.rules.push(ShellRule {
+                id: "deny-release-publish".to_string(),
+                description: Some("Deny direct release publishing commands.".to_string()),
+                r#match: ShellMatch {
+                    commands: Vec::new(),
+                    patterns: vec![
+                        "npm publish".to_string(),
+                        "cargo publish".to_string(),
+                        "gh release create".to_string(),
+                        "docker push".to_string(),
+                    ],
+                    risks: Vec::new(),
+                },
+                decision: Decision::Deny,
+                reason: Some("release publishing requires an out-of-band process".to_string()),
+            });
+            configure_github_mcp(&mut policy, Decision::Deny);
+        }
+    }
+
+    policy
+}
+
+fn configure_github_mcp(policy: &mut Policy, default_decision: Decision) {
+    let mut server = McpServerPolicy {
+        decision: default_decision,
+        rate_limit: RateLimitPolicy {
+            enabled: true,
+            max_requests: 60,
+            window_seconds: 60,
+        },
+        ..McpServerPolicy::default()
+    };
+    server
+        .tools
+        .insert("list_pull_requests".to_string(), Decision::Allow);
+    server
+        .tools
+        .insert("create_pull_request".to_string(), Decision::Ask);
+    server
+        .tools
+        .insert("merge_pull_request".to_string(), Decision::Deny);
+    server
+        .tools
+        .insert("create_release".to_string(), Decision::Deny);
+    policy.mcp.servers.insert("github".to_string(), server);
+}
+
+fn actor(trust_level: &str) -> ActorPolicy {
+    ActorPolicy {
+        trust_level: Some(trust_level.to_string()),
+    }
+}
+
+fn policy_preset_name(preset: PolicyPreset) -> &'static str {
+    match preset {
+        PolicyPreset::ReadOnly => "read-only",
+        PolicyPreset::Developer => "developer",
+        PolicyPreset::Strict => "strict",
+        PolicyPreset::TrustedProject => "trusted-project",
+        PolicyPreset::CiLike => "ci-like",
     }
 }
 
@@ -2367,5 +2582,33 @@ mod tests {
     fn detects_cd_command_case_insensitively() {
         assert!(is_cd_command(&["CD".to_string(), "..".to_string()]));
         assert!(!is_cd_command(&["pwd".to_string()]));
+    }
+
+    #[test]
+    fn policy_templates_set_expected_guardrails() {
+        let engineering =
+            build_policy_template(PolicyTemplate::EngineeringDefault, Some("app".to_string()));
+        assert_eq!(engineering.project.as_deref(), Some("app"));
+        assert!(engineering.actors.contains_key("codex"));
+        assert_eq!(
+            engineering.mcp.servers["github"].tools["merge_pull_request"],
+            Decision::Deny
+        );
+
+        let read_only = build_policy_template(PolicyTemplate::ReadOnlyAudit, None);
+        assert_eq!(read_only.default_decision, Decision::Deny);
+        assert_eq!(read_only.filesystem.write.decision, Decision::Deny);
+        assert!(!read_only.approval.remember_choices);
+
+        let release = build_policy_template(PolicyTemplate::ReleaseGuard, None);
+        assert_eq!(release.network.default_decision, Decision::Deny);
+        assert!(release.skills.deny.contains(&"release-publish".to_string()));
+        assert!(
+            release
+                .shell
+                .rules
+                .iter()
+                .any(|rule| rule.id == "deny-release-publish")
+        );
     }
 }

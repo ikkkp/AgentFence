@@ -38,6 +38,13 @@ agentfence skill check --name code-review`}</pre>
         Simulate hypothetical shell actions without creating approvals or audit rows.
       </p>
       <pre>{`agentfence simulate shell -- git status https://transfer.sh/file`}</pre>
+      <h2>Templates</h2>
+      <p>
+        Organization templates provide built-in starting points for team policy distribution.
+      </p>
+      <pre>{`agentfence policy template list
+agentfence policy template show engineering-default
+agentfence policy template export release-guard --output agentfence.policy.json --force`}</pre>
       <h2>Presets and bundles</h2>
       <pre>{`agentfence init --preset strict
 agentfence policy bundle keygen --output bundle-key.json

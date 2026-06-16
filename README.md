@@ -101,6 +101,8 @@ agentfence policy validate agentfence.policy.json
 agentfence policy schema
 agentfence policy ask "allow tests but ask before dependency installs"
 agentfence policy apply --yes "deny production deploy"
+agentfence policy template list
+agentfence policy template export engineering-default --output agentfence.policy.json --force
 agentfence policy bundle export --output team.bundle.json
 agentfence policy bundle keygen --output bundle-key.json
 agentfence policy bundle export --output signed.bundle.json --key bundle-key.json

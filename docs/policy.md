@@ -206,6 +206,22 @@ Use a preset during initialization:
 agentfence init --preset strict
 ```
 
+## Organization Templates
+
+Organization templates are built-in starting points for team policy distribution. Export one to a policy file, review it in version control, then optionally sign it as a policy bundle.
+
+```bash
+agentfence policy template list
+agentfence policy template show engineering-default
+agentfence policy template export release-guard --output agentfence.policy.json --force
+```
+
+Included templates:
+
+- `engineering-default`: balanced local development guardrails for coding agents.
+- `read-only-audit`: strict read-only policy with audit logging enabled.
+- `release-guard`: stricter release-branch policy that denies direct publishing and production-like actions.
+
 ## Policy Bundles
 
 Policy bundles are portable JSON artifacts for team templates and signed policies. They include the policy, a SHA-256 digest, and optional Ed25519 signature metadata.
