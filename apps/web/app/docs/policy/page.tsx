@@ -77,6 +77,7 @@ agentfence policy bundle keygen --output bundle-key.json
 agentfence policy bundle export --output team.bundle.json
 agentfence policy bundle sign team.bundle.json --key bundle-key.json
 agentfence policy bundle verify team.bundle.json
+agentfence policy bundle manifest team.bundle.json --output team.manifest.json
 agentfence policy bundle import team.bundle.json --yes --require-signature`}</pre>
     </main>
   );

@@ -453,6 +453,11 @@ enum PolicyBundleCommands {
     Verify {
         path: PathBuf,
     },
+    Manifest {
+        path: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     Sign {
         path: PathBuf,
         #[arg(long)]
@@ -2548,6 +2553,21 @@ fn policy_bundle_command(command: PolicyBundleCommands) -> Result<ExitCode> {
                 ExitCode::from(2)
             })
         }
+        PolicyBundleCommands::Manifest { path, output } => {
+            let bundle = load_policy_bundle(&path)?;
+            let verification = verify_policy_bundle(&bundle)?;
+            let manifest = policy_bundle_transparency_manifest(&path, &bundle, &verification)?;
+            let manifest = serde_json::to_string_pretty(&manifest)?;
+            if let Some(output) = output {
+                fs::write(&output, manifest).with_context(|| {
+                    format!("failed to write bundle manifest {}", output.display())
+                })?;
+                println!("created bundle manifest {}", output.display());
+            } else {
+                println!("{manifest}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         PolicyBundleCommands::Sign { path, key, output } => {
             let mut bundle = load_policy_bundle(&path)?;
             let keypair = load_policy_bundle_keypair(&key)?;
@@ -2590,6 +2610,45 @@ fn policy_bundle_command(command: PolicyBundleCommands) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn policy_bundle_transparency_manifest(
+    path: &Path,
+    bundle: &PolicyBundle,
+    verification: &agentfence_policy::BundleVerification,
+) -> Result<serde_json::Value> {
+    let signature = bundle
+        .signature
+        .as_ref()
+        .map(policy_bundle_signature_summary)
+        .transpose()?;
+    Ok(serde_json::json!({
+        "kind": "agentfence.policyBundleTransparencyManifest",
+        "version": "0.1",
+        "generatedAt": Utc::now().to_rfc3339(),
+        "source": {
+            "path": path.to_string_lossy()
+        },
+        "bundle": {
+            "bundleVersion": &bundle.bundle_version,
+            "name": &bundle.name,
+            "description": &bundle.description,
+            "organization": &bundle.organization,
+            "policyDigest": &bundle.digest
+        },
+        "signature": signature,
+        "verification": verification
+    }))
+}
+
+fn policy_bundle_signature_summary(signature: &PolicyBundleSignature) -> Result<serde_json::Value> {
+    let signature_value = serde_json::to_value(signature)
+        .context("failed to serialize policy bundle signature summary")?;
+    Ok(serde_json::json!({
+        "algorithm": &signature.algorithm,
+        "publicKey": &signature.public_key,
+        "signatureDigest": json_digest(&signature_value)?
+    }))
 }
 
 fn load_policy_bundle(path: &Path) -> Result<PolicyBundle> {
@@ -4796,6 +4855,43 @@ mod tests {
                 .rules
                 .iter()
                 .any(|rule| rule.id == "deny-release-publish")
+        );
+    }
+
+    #[test]
+    fn policy_bundle_manifest_includes_signature_transparency_metadata() {
+        let mut bundle = create_policy_bundle(
+            "team-policy".to_string(),
+            Some("Team policy".to_string()),
+            Some("AgentFence".to_string()),
+            Policy::default(),
+        )
+        .expect("bundle");
+        let keypair = generate_policy_bundle_keypair();
+        sign_policy_bundle(&mut bundle, &keypair).expect("sign");
+        let verification = verify_policy_bundle(&bundle).expect("verify");
+
+        let manifest = policy_bundle_transparency_manifest(
+            Path::new("team.bundle.json"),
+            &bundle,
+            &verification,
+        )
+        .expect("manifest");
+
+        assert_eq!(
+            manifest["kind"],
+            "agentfence.policyBundleTransparencyManifest"
+        );
+        assert_eq!(manifest["bundle"]["name"], "team-policy");
+        assert_eq!(manifest["bundle"]["organization"], "AgentFence");
+        assert_eq!(manifest["bundle"]["policyDigest"], bundle.digest);
+        assert_eq!(manifest["verification"]["valid"], true);
+        assert_eq!(manifest["signature"]["publicKey"], keypair.public_key);
+        assert!(
+            manifest["signature"]["signatureDigest"]
+                .as_str()
+                .expect("signature digest")
+                .starts_with("sha256:")
         );
     }
 
