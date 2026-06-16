@@ -1,0 +1,12 @@
+{
+  "agent": "claude-code",
+  "actor": "claude-code",
+  "recommendedPreset": "developer",
+  "policy": "../claude-code.policy.json",
+  "command": ["agentfence", "run", "--actor", "claude-code", "--", "claude"],
+  "auditStore": ".agentfence/audit.sqlite",
+  "notes": [
+    "Replace the final command with the installed Claude Code binary if needed.",
+    "Use daemon approvals when the desktop app is running."
+  ]
+}

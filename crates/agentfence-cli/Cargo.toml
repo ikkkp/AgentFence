@@ -1,0 +1,22 @@
+[package]
+name = "agentfence-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "agentfence"
+path = "src/main.rs"
+
+[dependencies]
+agentfence-audit = { path = "../agentfence-audit" }
+agentfence-mcp = { path = "../agentfence-mcp" }
+agentfence-policy = { path = "../agentfence-policy" }
+agentfence-shell = { path = "../agentfence-shell" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+

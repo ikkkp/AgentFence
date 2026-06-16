@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentfence.dev/schemas/agentfence.policy.schema.json",
+  "title": "AgentFence Policy",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "project": {
+      "type": "string"
+    },
+    "defaultDecision": {
+      "$ref": "#/$defs/decision"
+    },
+    "actors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "trustLevel": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "shell": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shellRule"
+          }
+        }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "properties": {
+        "allowRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denyPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/decision"
+            },
+            "allowExtensions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "defaultDecision": {
+          "$ref": "#/$defs/decision"
+        },
+        "allowDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denyDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "defaultDecision": {
+          "$ref": "#/$defs/decision"
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["skill", "decision"],
+            "properties": {
+              "skill": {
+                "type": "string"
+              },
+              "decision": {
+                "$ref": "#/$defs/decision"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "properties": {
+        "ttlSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rememberChoices": {
+          "type": "boolean"
+        },
+        "requireReasonForHighRisk": {
+          "type": "boolean"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "store": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "ask",
+        "allow_once",
+        "allow_for_session",
+        "allow_with_constraints"
+      ]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "shellRule": {
+      "type": "object",
+      "required": ["id", "decision"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "match": {
+          "type": "object",
+          "properties": {
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "risks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/risk"
+              }
+            }
+          }
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "decision": {
+          "$ref": "#/$defs/decision"
+        },
+        "tools": {
+          "$ref": "#/$defs/decisionMap"
+        },
+        "resources": {
+          "$ref": "#/$defs/decisionMap"
+        },
+        "prompts": {
+          "$ref": "#/$defs/decisionMap"
+        }
+      }
+    },
+    "decisionMap": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/decision"
+      }
+    }
+  }
+}
+

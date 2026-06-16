@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  rust-binaries:
+    name: Rust binaries (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            exe: ".exe"
+          - os: macos-latest
+            name: macos-arm64
+            exe: ""
+          - os: ubuntu-latest
+            name: linux-x64
+            exe: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binaries
+        run: cargo build --release --bin agentfence --bin agentfenced
+      - name: Stage binary archive
+        shell: pwsh
+        run: |
+          $stage = "dist/agentfence-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item "target/release/agentfence${{ matrix.exe }}" "$stage/"
+          Copy-Item "target/release/agentfenced${{ matrix.exe }}" "$stage/"
+          Copy-Item "README.md" "$stage/"
+          Copy-Item "agentfence.policy.json" "$stage/"
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/agentfence-${{ matrix.name }}.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentfence-${{ matrix.name }}
+          path: dist/agentfence-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  desktop-bundles:
+    name: Desktop bundle (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            exe: ".exe"
+          - os: macos-latest
+            name: macos-arm64
+            exe: ""
+          - os: ubuntu-latest
+            name: linux-x64
+            exe: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop bundle
+        run: pnpm --filter @agentfence/desktop tauri:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentfence-desktop-${{ matrix.name }}
+          path: |
+            target/release/bundle/**
+            target/release/agentfence-desktop${{ matrix.exe }}
+          if-no-files-found: warn

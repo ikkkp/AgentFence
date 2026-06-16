@@ -1,0 +1,45 @@
+export default function PolicyPage() {
+  return (
+    <main className="page">
+      <a className="back" href="/">AgentFence Docs</a>
+      <h1>Policy JSON</h1>
+      <p>
+        AgentFence policies describe actor trust, shell command rules, filesystem boundaries, network
+        preferences, MCP access, skill access, approval behavior, and audit storage.
+      </p>
+      <pre>{`{
+  "version": "0.1",
+  "defaultDecision": "ask",
+  "shell": {
+    "rules": [
+      {
+        "id": "allow-readonly",
+        "match": { "commands": ["git status", "git diff"] },
+        "decision": "allow"
+      }
+    ]
+  }
+}`}</pre>
+      <h2>Other checks</h2>
+      <pre>{`agentfence filesystem check --operation read --path ~/.ssh/id_rsa
+agentfence network check --domain github.com
+agentfence skill check --name code-review`}</pre>
+      <h2>Policy assistant</h2>
+      <p>
+        The assistant produces JSON Patch proposals. It does not apply policy changes automatically.
+      </p>
+      <pre>{`agentfence policy ask "allow tests but ask before dependency installs"`}</pre>
+      <p>
+        Policy changes can be applied after confirmation, and the patched JSON is validated before it is written.
+      </p>
+      <pre>{`agentfence policy apply "deny production deploy"`}</pre>
+      <h2>Presets and bundles</h2>
+      <pre>{`agentfence init --preset strict
+agentfence policy bundle keygen --output bundle-key.json
+agentfence policy bundle export --output team.bundle.json
+agentfence policy bundle sign team.bundle.json --key bundle-key.json
+agentfence policy bundle verify team.bundle.json
+agentfence policy bundle import team.bundle.json --yes --require-signature`}</pre>
+    </main>
+  );
+}

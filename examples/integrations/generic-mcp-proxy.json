@@ -1,0 +1,22 @@
+{
+  "agent": "generic-mcp-client",
+  "actor": "mcp-proxy",
+  "recommendedPreset": "developer",
+  "command": [
+    "agentfence",
+    "mcp",
+    "proxy",
+    "--server",
+    "github",
+    "--ask-mode",
+    "queue",
+    "--",
+    "node",
+    "path/to/github-mcp-server.js"
+  ],
+  "daemon": "http://127.0.0.1:37421",
+  "notes": [
+    "Use --ask-mode queue to route ask decisions to the daemon and desktop approval queue.",
+    "Denied tools, resources, and prompts are blocked before they reach the upstream MCP server."
+  ]
+}

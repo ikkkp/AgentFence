@@ -1,0 +1,13 @@
+target/
+node_modules/
+.turbo/
+.next/
+dist/
+build/
+.agentfence/
+*.tsbuildinfo
+apps/desktop/src-tauri/gen/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

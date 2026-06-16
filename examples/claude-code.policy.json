@@ -1,0 +1,76 @@
+{
+  "$schema": "../schemas/agentfence.policy.schema.json",
+  "version": "0.1",
+  "project": "claude-code-project",
+  "defaultDecision": "ask",
+  "actors": {
+    "claude-code": {
+      "trustLevel": "medium"
+    }
+  },
+  "shell": {
+    "rules": [
+      {
+        "id": "allow-claude-code-readonly",
+        "match": {
+          "commands": ["pwd", "ls", "dir", "rg", "grep", "cat", "type", "git status", "git diff"],
+          "risks": ["low"]
+        },
+        "decision": "allow",
+        "reason": "Claude Code can inspect the local project"
+      },
+      {
+        "id": "ask-claude-code-writes",
+        "match": {
+          "commands": ["git commit", "git reset", "git clean"],
+          "risks": ["high"]
+        },
+        "decision": "ask",
+        "reason": "repository-changing commands require approval"
+      },
+      {
+        "id": "deny-claude-code-deploy",
+        "match": {
+          "patterns": ["deploy production", "vercel --prod", "fly deploy", "kubectl apply"]
+        },
+        "decision": "deny",
+        "reason": "production deploys are not allowed from this agent profile"
+      },
+      {
+        "id": "deny-claude-code-destructive-roots",
+        "match": {
+          "patterns": ["rm -rf /", "rm -rf ~", "del /s", "format "],
+          "risks": ["critical"]
+        },
+        "decision": "deny",
+        "reason": "broad destructive commands are denied"
+      }
+    ]
+  },
+  "filesystem": {
+    "allowRoots": ["./"],
+    "denyPaths": ["~/.ssh", "~/.aws", ".env", "secrets.json"],
+    "write": {
+      "decision": "ask",
+      "allowExtensions": [".ts", ".tsx", ".js", ".rs", ".py", ".md", ".json"]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "filesystem": {
+        "enabled": true,
+        "decision": "ask",
+        "tools": {
+          "read_file": "allow",
+          "write_file": "ask",
+          "delete_file": "deny"
+        }
+      }
+    }
+  },
+  "audit": {
+    "enabled": true,
+    "store": ".agentfence/audit.sqlite"
+  }
+}
+

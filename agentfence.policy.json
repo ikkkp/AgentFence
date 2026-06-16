@@ -1,0 +1,162 @@
+{
+  "$schema": "./schemas/agentfence.policy.schema.json",
+  "version": "0.1",
+  "project": "AgentFence",
+  "defaultDecision": "ask",
+  "actors": {
+    "codex": {
+      "trustLevel": "medium"
+    },
+    "claude-code": {
+      "trustLevel": "medium"
+    }
+  },
+  "shell": {
+    "rules": [
+      {
+        "id": "allow-readonly",
+        "description": "Allow common read-only inspection commands.",
+        "match": {
+          "commands": [
+            "pwd",
+            "ls",
+            "dir",
+            "rg",
+            "grep",
+            "cat",
+            "type",
+            "git status",
+            "git diff"
+          ],
+          "risks": ["low"]
+        },
+        "decision": "allow",
+        "reason": "read-only inspection is allowed"
+      },
+      {
+        "id": "allow-local-tests",
+        "description": "Allow local build and test commands for this repository.",
+        "match": {
+          "commands": [
+            "cargo test",
+            "cargo check",
+            "cargo fmt",
+            "pnpm typecheck",
+            "pnpm lint"
+          ]
+        },
+        "decision": "allow",
+        "reason": "local verification commands are allowed"
+      },
+      {
+        "id": "ask-package-install",
+        "description": "Ask before dependency installation.",
+        "match": {
+          "commands": [
+            "cargo install",
+            "npm install",
+            "pnpm install",
+            "yarn install",
+            "pip install"
+          ],
+          "risks": ["high"]
+        },
+        "decision": "ask",
+        "reason": "package installation can modify the environment"
+      },
+      {
+        "id": "deny-dangerous-delete",
+        "description": "Deny destructive delete commands targeting broad roots.",
+        "match": {
+          "patterns": [
+            "rm -rf /",
+            "rm -rf ~",
+            "del /s",
+            "format "
+          ],
+          "risks": ["critical"]
+        },
+        "decision": "deny",
+        "reason": "dangerous broad deletion is denied"
+      }
+    ]
+  },
+  "filesystem": {
+    "allowRoots": ["./"],
+    "denyPaths": [
+      "~/.ssh",
+      "~/.aws",
+      "~/.config",
+      ".env",
+      "secrets.json"
+    ],
+    "write": {
+      "decision": "ask",
+      "allowExtensions": [
+        ".rs",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".py",
+        ".md",
+        ".json"
+      ]
+    }
+  },
+  "network": {
+    "defaultDecision": "ask",
+    "allowDomains": [
+      "github.com",
+      "registry.npmjs.org",
+      "pypi.org",
+      "crates.io"
+    ],
+    "denyDomains": [
+      "pastebin.com",
+      "transfer.sh"
+    ]
+  },
+  "mcp": {
+    "servers": {
+      "github": {
+        "enabled": true,
+        "decision": "ask",
+        "tools": {
+          "list_pull_requests": "allow",
+          "list_issues": "allow",
+          "create_pull_request": "ask",
+          "merge_pull_request": "deny"
+        }
+      },
+      "filesystem": {
+        "enabled": true,
+        "decision": "ask",
+        "tools": {
+          "read_file": "allow",
+          "write_file": "ask",
+          "delete_file": "deny"
+        }
+      }
+    }
+  },
+  "skills": {
+    "defaultDecision": "ask",
+    "allow": [
+      "code-review",
+      "test-runner",
+      "docs-editor"
+    ],
+    "deny": [
+      "deploy-production"
+    ]
+  },
+  "approval": {
+    "ttlSeconds": 900,
+    "rememberChoices": true,
+    "requireReasonForHighRisk": true
+  },
+  "audit": {
+    "enabled": true,
+    "store": ".agentfence/audit.sqlite"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "../schemas/agentfence.policy.schema.json",
+  "version": "0.1",
+  "project": "codex-project",
+  "defaultDecision": "ask",
+  "actors": {
+    "codex": {
+      "trustLevel": "medium"
+    }
+  },
+  "shell": {
+    "rules": [
+      {
+        "id": "allow-codex-readonly",
+        "match": {
+          "commands": ["pwd", "ls", "dir", "rg", "grep", "cat", "type", "git status", "git diff"],
+          "risks": ["low"]
+        },
+        "decision": "allow",
+        "reason": "Codex can inspect the local project"
+      },
+      {
+        "id": "allow-codex-tests",
+        "match": {
+          "commands": ["cargo test", "npm test", "pnpm test", "pytest"]
+        },
+        "decision": "allow",
+        "reason": "Codex can run local tests"
+      },
+      {
+        "id": "ask-codex-installs",
+        "match": {
+          "commands": ["cargo install", "npm install", "pnpm install", "pip install"],
+          "risks": ["high"]
+        },
+        "decision": "ask",
+        "reason": "dependency installation requires approval"
+      },
+      {
+        "id": "deny-codex-destructive-roots",
+        "match": {
+          "patterns": ["rm -rf /", "rm -rf ~", "del /s", "format "],
+          "risks": ["critical"]
+        },
+        "decision": "deny",
+        "reason": "broad destructive commands are denied"
+      }
+    ]
+  },
+  "mcp": {
+    "servers": {
+      "github": {
+        "enabled": true,
+        "decision": "ask",
+        "tools": {
+          "list_pull_requests": "allow",
+          "create_pull_request": "ask",
+          "merge_pull_request": "deny"
+        }
+      }
+    }
+  },
+  "skills": {
+    "defaultDecision": "ask",
+    "allow": ["code-review", "test-runner"],
+    "deny": ["deploy-production"]
+  },
+  "audit": {
+    "enabled": true,
+    "store": ".agentfence/audit.sqlite"
+  }
+}
+
