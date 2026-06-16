@@ -12,11 +12,12 @@ import {
   RefreshCw,
   Save,
   Shield,
+  SlidersHorizontal,
   X
 } from "lucide-react";
 import "./styles.css";
 
-const daemonBase = "http://127.0.0.1:37421";
+const DEFAULT_DAEMON_BASE = "http://127.0.0.1:37421";
 type AuditDecisionFilter = "all" | "allow" | "deny" | "ask";
 type PolicyDiff = { hasChanges: boolean; summary: string; text: string };
 type DiffOperation = { type: "same" | "add" | "remove"; text: string };
@@ -92,6 +93,8 @@ const policyPreview = `{
 }`;
 
 function App() {
+  const [daemonBase, setDaemonBase] = useState(DEFAULT_DAEMON_BASE);
+  const [daemonBaseDraft, setDaemonBaseDraft] = useState(DEFAULT_DAEMON_BASE);
   const [daemon, setDaemon] = useState<"checking" | "ready" | "offline">("checking");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>(fallbackApprovals);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(fallbackAudit);
@@ -118,13 +121,14 @@ function App() {
 
   useEffect(() => {
     const controller = new AbortController();
+    setDaemon("checking");
     fetch(`${daemonBase}/health`, { signal: controller.signal })
       .then((response) => {
         setDaemon(response.ok ? "ready" : "offline");
       })
       .catch(() => setDaemon("offline"));
     return () => controller.abort();
-  }, []);
+  }, [daemonBase]);
 
   useEffect(() => {
     if ("Notification" in window) {
@@ -137,13 +141,13 @@ function App() {
       refreshApprovals();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [notificationPermission]);
+  }, [notificationPermission, daemonBase]);
 
   useEffect(() => {
     refreshAudit();
     const timer = window.setInterval(refreshAudit, 5000);
     return () => window.clearInterval(timer);
-  }, [auditActorFilter, auditActionFilter, auditDecisionFilter]);
+  }, [auditActorFilter, auditActionFilter, auditDecisionFilter, daemonBase]);
 
   async function refreshApprovals() {
     try {
@@ -350,6 +354,12 @@ function App() {
     }
   }
 
+  function applyDaemonBase() {
+    const next = normalizeDaemonBase(daemonBaseDraft);
+    setDaemonBaseDraft(next);
+    setDaemonBase(next);
+  }
+
   const activeAgents = new Set([
     ...approvals.map((item) => item.actor),
     ...auditEvents.map((item) => item.actor)
@@ -372,6 +382,7 @@ function App() {
           <a><History size={18} />Audit</a>
           <a><FileJson size={18} />Policy</a>
           <a><Plug size={18} />MCP & Skills</a>
+          <a><SlidersHorizontal size={18} />Settings</a>
         </nav>
       </aside>
 
@@ -385,7 +396,7 @@ function App() {
             <button className="text-button" onClick={enableNotifications}>
               <Bell size={15} />{notificationPermission === "granted" ? "Notifications on" : "Enable alerts"}
             </button>
-            <span className={`daemon daemon-${daemon}`}>Daemon {daemon} - localhost:37421</span>
+            <span className={`daemon daemon-${daemon}`}>Daemon {daemon} - {daemonBase}</span>
           </div>
         </header>
 
@@ -566,6 +577,53 @@ function App() {
               </div>
             </div>
           </Panel>
+
+          <Panel title="Settings" icon={<SlidersHorizontal size={18} />}>
+            <div className="settings-panel">
+              <label className="setting-field">
+                <span>Daemon endpoint</span>
+                <input
+                  value={daemonBaseDraft}
+                  onChange={(event) => setDaemonBaseDraft(event.target.value)}
+                  aria-label="Daemon endpoint"
+                />
+              </label>
+              <div className="setting-actions">
+                <button className="text-button primary" onClick={applyDaemonBase}>Apply</button>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setDaemonBaseDraft(DEFAULT_DAEMON_BASE);
+                    setDaemonBase(DEFAULT_DAEMON_BASE);
+                  }}
+                >
+                  Reset
+                </button>
+                <button className="text-button" onClick={() => {
+                  refreshApprovals();
+                  refreshAudit();
+                  refreshPolicy();
+                  refreshBundleDigest();
+                }}>
+                  <RefreshCw size={15} />Refresh
+                </button>
+              </div>
+              <div className="settings-grid">
+                <div>
+                  <span>Status</span>
+                  <strong className={`daemon daemon-${daemon}`}>{daemon}</strong>
+                </div>
+                <div>
+                  <span>Audit export</span>
+                  <code>{`${daemonBase}/audit/export`}</code>
+                </div>
+                <div>
+                  <span>Policy bundle</span>
+                  <code>{`${daemonBase}/policy/bundle`}</code>
+                </div>
+              </div>
+            </div>
+          </Panel>
         </section>
       </section>
     </main>
@@ -612,6 +670,11 @@ function formatAuditTime(timestamp: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function normalizeDaemonBase(value: string) {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed || DEFAULT_DAEMON_BASE;
 }
 
 function parseCommandLine(value: string) {

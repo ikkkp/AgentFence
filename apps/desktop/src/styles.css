@@ -590,6 +590,59 @@ th {
   cursor: pointer;
 }
 
+.settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.setting-field {
+  display: grid;
+  gap: 6px;
+}
+
+.setting-field span,
+.settings-grid span {
+  color: #607168;
+  font-size: 13px;
+}
+
+.setting-field input {
+  background: #f8faf7;
+  border: 1px solid #d9e2d8;
+  border-radius: 8px;
+  color: #17211c;
+  min-height: 38px;
+  min-width: 0;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-grid > div {
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 11px;
+}
+
+.settings-grid code {
+  color: #17211c;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   body {
     min-width: 0;
