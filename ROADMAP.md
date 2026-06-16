@@ -24,7 +24,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow with per-operation review, audit-driven narrower-rule suggestions after repeated approvals, plus side-effect-free shell simulation and explanations.
 - Milestone 6 website/docs: homepage, download page, security page, changelog, blog foundation, quickstart, policy, MCP, and audit documentation.
-- Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles, per-agent setup guides, and CLI wrapper installation.
+- Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles, per-agent setup guides, CLI wrapper installation, and optional PATH registration.
 - Milestone 8 foundations: signed policy bundles, verification, import, organization policy templates, audit export, and local audit reports.
 
 Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, deeper stream-aware MCP filtering, richer policy authoring workflows, and optional team/cloud features.
@@ -305,7 +305,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 ## Near-Term Backlog
 
 - Keep CLI, daemon, desktop, and website verification green in CI.
-- Add installer packaging that can place generated wrappers onto PATH automatically.
+- Add release installer packaging around the wrapper PATH registration flow.
 - Add richer policy authoring workflows such as reusable rule libraries and importable review presets.
 - Add deeper stream-aware MCP filtering for streamed list responses.
 - Explore full PTY integration for agents that launch nested commands.

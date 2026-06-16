@@ -12,7 +12,11 @@ export default function IntegrationsPage() {
 agentfence integrations show codex --format shell
 agentfence integrations show claude-code --format powershell
 agentfence integrations show generic-mcp --format json
-agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force`}</pre>
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force --add-to-path`}</pre>
+      <p>
+        `--add-to-path` persists the wrapper directory on your user PATH so a new terminal can run
+        the generated wrapper by name.
+      </p>
       <h2>Codex</h2>
       <pre>{`agentfence init --preset developer --project codex-project
 agentfence run --actor codex -- codex`}</pre>

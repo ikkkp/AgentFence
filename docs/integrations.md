@@ -20,10 +20,10 @@ agentfence integrations list
 agentfence integrations show codex --format shell
 agentfence integrations show claude-code --format powershell
 agentfence integrations show generic-mcp --format json
-agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force --add-to-path
 ```
 
-Install writes a reusable wrapper script. Shell wrappers forward extra arguments with `"$@"`; PowerShell wrappers forward remaining arguments with `@AgentFenceArgs`.
+Install writes a reusable wrapper script. Shell wrappers forward extra arguments with `"$@"`; PowerShell wrappers forward remaining arguments with `@AgentFenceArgs`. Add `--add-to-path` when you want AgentFence to persist the wrapper directory on your user PATH; open a new terminal afterward before running `agentfence-codex` or `agentfence-claude-code` by name.
 
 Detailed guides:
 

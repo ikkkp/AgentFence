@@ -21,7 +21,7 @@ Equivalent built-in profile:
 
 ```bash
 agentfence integrations show codex --format shell
-agentfence integrations install codex --format shell --output-dir .agentfence/wrappers --force
+agentfence integrations install codex --format shell --output-dir .agentfence/wrappers --force --add-to-path
 ```
 
 The actor name `codex` is written into audit rows and can be matched by future policy rules.

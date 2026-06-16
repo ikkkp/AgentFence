@@ -10,7 +10,7 @@ export default function ClaudeCodeIntegrationPage() {
 agentfence run --actor claude-code -- claude`}</pre>
       <h2>Profile</h2>
       <pre>{`agentfence integrations show claude-code --format powershell
-agentfence integrations install claude-code --format powershell --output-dir .agentfence/wrappers --force`}</pre>
+agentfence integrations install claude-code --format powershell --output-dir .agentfence/wrappers --force --add-to-path`}</pre>
       <h2>Filesystem MCP</h2>
       <pre>{`{
   "mcp": {

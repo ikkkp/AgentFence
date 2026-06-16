@@ -35,6 +35,7 @@ The CLI lives in `crates/agentfence-cli`. It is the first enforcement entry poin
 - `logs` reads the local SQLite audit store.
 - `approvals list` and `approve` inspect and resolve daemon approval requests from the terminal.
 - `mcp check` evaluates MCP access decisions.
+- `integrations install` writes agent wrapper scripts and can optionally register the wrapper directory on the user PATH.
 
 ### Daemon
 

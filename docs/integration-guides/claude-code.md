@@ -27,7 +27,7 @@ Equivalent built-in profile:
 
 ```bash
 agentfence integrations show claude-code --format powershell
-agentfence integrations install claude-code --format powershell --output-dir .agentfence/wrappers --force
+agentfence integrations install claude-code --format powershell --output-dir .agentfence/wrappers --force --add-to-path
 ```
 
 ## MCP Servers

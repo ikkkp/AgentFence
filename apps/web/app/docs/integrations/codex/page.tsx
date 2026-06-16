@@ -10,7 +10,7 @@ export default function CodexIntegrationPage() {
 agentfence run --actor codex -- codex`}</pre>
       <h2>Profile</h2>
       <pre>{`agentfence integrations show codex --format shell
-agentfence integrations install codex --format shell --output-dir .agentfence/wrappers --force`}</pre>
+agentfence integrations install codex --format shell --output-dir .agentfence/wrappers --force --add-to-path`}</pre>
       <h2>MCP</h2>
       <pre>{`agentfence mcp proxy \\
   --server github \\

@@ -5,7 +5,7 @@ Use AgentFence as a policy-enforcing MCP proxy when an agent supports custom MCP
 Generate a reusable wrapper script when the client accepts a command path:
 
 ```bash
-agentfence integrations install generic-mcp --format shell --output-dir .agentfence/wrappers --force
+agentfence integrations install generic-mcp --format shell --output-dir .agentfence/wrappers --force --add-to-path
 ```
 
 ## Stdio MCP

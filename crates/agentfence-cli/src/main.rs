@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -381,6 +382,8 @@ enum IntegrationCommands {
         format: IntegrationFormat,
         #[arg(long)]
         force: bool,
+        #[arg(long)]
+        add_to_path: bool,
     },
 }
 
@@ -1603,6 +1606,7 @@ fn integrations_command(command: IntegrationCommands) -> Result<ExitCode> {
             output_dir,
             format,
             force,
+            add_to_path,
         } => {
             if matches!(format, IntegrationFormat::Json) {
                 bail!("integration install requires --format shell or --format powershell");
@@ -1621,6 +1625,9 @@ fn integrations_command(command: IntegrationCommands) -> Result<ExitCode> {
                 .with_context(|| format!("failed to write wrapper {}", output.display()))?;
             make_wrapper_executable(&output)?;
             println!("created integration wrapper {}", output.display());
+            if add_to_path {
+                ensure_wrapper_dir_on_path(&output_dir)?;
+            }
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -1795,6 +1802,102 @@ fn make_wrapper_executable(path: &Path) -> Result<()> {
         let _ = path;
     }
     Ok(())
+}
+
+fn ensure_wrapper_dir_on_path(path: &Path) -> Result<()> {
+    let directory = fs::canonicalize(path)
+        .with_context(|| format!("failed to resolve wrapper directory {}", path.display()))?;
+    if path_env_contains_dir(&directory, env::var_os("PATH").as_deref()) {
+        println!("wrapper directory already on PATH: {}", directory.display());
+        return Ok(());
+    }
+    persist_path_dir(&directory)?;
+    println!("added wrapper directory to PATH: {}", directory.display());
+    println!("open a new terminal before invoking the wrapper by name");
+    Ok(())
+}
+
+fn path_env_contains_dir(directory: &Path, path_env: Option<&OsStr>) -> bool {
+    let Some(path_env) = path_env else {
+        return false;
+    };
+    env::split_paths(path_env).any(|entry| paths_match_for_env(&entry, directory))
+}
+
+fn paths_match_for_env(left: &Path, right: &Path) -> bool {
+    normalize_path_for_env(left) == normalize_path_for_env(right)
+}
+
+fn normalize_path_for_env(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('\\', "/");
+    while value.len() > 1 && value.ends_with('/') {
+        value.pop();
+    }
+    #[cfg(windows)]
+    {
+        value = value.to_ascii_lowercase();
+    }
+    value
+}
+
+#[cfg(windows)]
+fn persist_path_dir(directory: &Path) -> Result<()> {
+    let target = powershell_single_quote(&directory.to_string_lossy());
+    let script = format!(
+        "$target = {target}\n\
+         $current = [Environment]::GetEnvironmentVariable('Path', 'User')\n\
+         if ([string]::IsNullOrWhiteSpace($current)) {{ $parts = @() }} else {{ $parts = $current -split ';' | Where-Object {{ $_ -ne '' }} }}\n\
+         if (-not ($parts | Where-Object {{ $_ -ieq $target }})) {{\n\
+         $next = ($parts + $target) -join ';'\n\
+         [Environment]::SetEnvironmentVariable('Path', $next, 'User')\n\
+         }}\n"
+    );
+    let status = Command::new("powershell")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-Command")
+        .arg(script)
+        .status()
+        .context("failed to update user PATH with powershell")?;
+    if !status.success() {
+        bail!("failed to update user PATH");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(windows))]
+fn persist_path_dir(directory: &Path) -> Result<()> {
+    let home = env::var_os("HOME").context("HOME is not set; cannot update ~/.profile")?;
+    let profile = PathBuf::from(home).join(".profile");
+    let line = shell_path_export_line(directory);
+    let existing = fs::read_to_string(&profile).unwrap_or_default();
+    if !existing.contains(&directory.to_string_lossy().to_string()) {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&profile)
+            .with_context(|| format!("failed to update {}", profile.display()))?;
+        writeln!(file, "\n# AgentFence wrapper path\n{line}")?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn shell_path_export_line(directory: &Path) -> String {
+    format!(
+        "export PATH={}:\"$PATH\"",
+        shell_single_quote(&directory.to_string_lossy())
+    )
+}
+
+#[cfg(not(windows))]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn quote_command(args: &[&str], format: IntegrationFormat) -> String {
@@ -3008,6 +3111,51 @@ mod tests {
             integration_wrapper_filename(codex, IntegrationFormat::PowerShell),
             "agentfence-codex.ps1"
         );
+    }
+
+    #[test]
+    fn detects_wrapper_directory_in_path_env() {
+        let wrapper_dir = PathBuf::from(if cfg!(windows) {
+            r"C:\agentfence\wrappers"
+        } else {
+            "/opt/agentfence/wrappers"
+        });
+        let other_dir = PathBuf::from(if cfg!(windows) {
+            r"C:\tools"
+        } else {
+            "/usr/local/bin"
+        });
+        let path_env =
+            env::join_paths([other_dir.as_os_str(), wrapper_dir.as_os_str()]).expect("PATH");
+
+        assert!(path_env_contains_dir(
+            &wrapper_dir,
+            Some(path_env.as_os_str())
+        ));
+        assert!(!path_env_contains_dir(
+            Path::new(if cfg!(windows) {
+                r"C:\agentfence\other"
+            } else {
+                "/opt/agentfence/other"
+            }),
+            Some(path_env.as_os_str())
+        ));
+    }
+
+    #[test]
+    fn normalizes_path_env_entries() {
+        assert!(paths_match_for_env(
+            Path::new(if cfg!(windows) {
+                r"C:\AgentFence\Wrappers\"
+            } else {
+                "/opt/agentfence/wrappers/"
+            }),
+            Path::new(if cfg!(windows) {
+                r"c:\agentfence\wrappers"
+            } else {
+                "/opt/agentfence/wrappers"
+            })
+        ));
     }
 
     #[test]
