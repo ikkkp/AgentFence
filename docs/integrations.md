@@ -22,6 +22,13 @@ agentfence integrations show claude-code --format powershell
 agentfence integrations show generic-mcp --format json
 ```
 
+Detailed guides:
+
+- [Codex](./integration-guides/codex.md)
+- [Claude Code](./integration-guides/claude-code.md)
+- [Cursor-style agents](./integration-guides/cursor-style.md)
+- [Generic MCP clients](./integration-guides/generic-mcp.md)
+
 ## Codex
 
 Recommended profile:

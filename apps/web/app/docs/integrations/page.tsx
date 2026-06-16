@@ -18,18 +18,21 @@ agentfence run --actor codex -- codex`}</pre>
       <p>
         Use `examples/codex.policy.json` and `examples/integrations/codex-wrapper.json` as a starting point.
       </p>
+      <p><a href="/docs/integrations/codex">Open Codex guide</a></p>
       <h2>Claude Code</h2>
       <pre>{`agentfence init --preset developer --project claude-code-project
 agentfence run --actor claude-code -- claude`}</pre>
       <p>
         Use `examples/claude-code.policy.json` and `examples/integrations/claude-code-wrapper.json`.
       </p>
+      <p><a href="/docs/integrations/claude-code">Open Claude Code guide</a></p>
       <h2>Cursor-style agents</h2>
       <pre>{`agentfence run --actor cursor-agent -- node ./agent-entrypoint.js`}</pre>
       <p>
         Wrap the underlying command or harness that launches local actions, then loosen policy from
         audit evidence.
       </p>
+      <p><a href="/docs/integrations/cursor-style">Open Cursor-style guide</a></p>
       <h2>Generic MCP clients</h2>
       <pre>{`agentfence mcp proxy \\
   --server github \\
@@ -42,6 +45,7 @@ agentfence mcp http-proxy \\
       <p>
         `--ask-mode queue` sends ask decisions to the daemon so the desktop approval queue can resolve them.
       </p>
+      <p><a href="/docs/integrations/generic-mcp">Open Generic MCP guide</a></p>
     </main>
   );
 }

@@ -24,10 +24,10 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, audit-driven narrower-rule suggestions after repeated approvals, plus side-effect-free shell simulation and explanations.
 - Milestone 6 website/docs: homepage, download page, security page, changelog, blog foundation, quickstart, policy, MCP, and audit documentation.
-- Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
+- Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles plus per-agent setup guides.
 - Milestone 8 foundations: signed policy bundles, verification, import, organization policy templates, audit export, and local audit reports.
 
-Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, deeper stream-aware MCP filtering, richer visual policy editing, agent-specific integration guides, and optional team/cloud features.
+Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, deeper stream-aware MCP filtering, richer visual policy editing, and optional team/cloud features.
 
 ## Guiding Principles
 
@@ -305,7 +305,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 ## Near-Term Backlog
 
 - Keep CLI, daemon, desktop, and website verification green in CI.
-- Add Codex and Claude Code integration guides with recommended wrapper commands.
+- Add packaging examples that install integration wrappers onto PATH.
 - Add richer desktop policy editing for structured rule forms and guided JSON Patch review.
 - Add deeper stream-aware MCP filtering for streamed list responses.
 - Explore full PTY integration for agents that launch nested commands.

@@ -176,4 +176,4 @@ See [docs/release.md](./docs/release.md) for tag-driven packaging.
 
 See [ROADMAP.md](./ROADMAP.md).
 
-Integration profiles are documented in [docs/integrations.md](./docs/integrations.md), with machine-readable wrapper examples in [examples/integrations](./examples/integrations).
+Integration profiles are documented in [docs/integrations.md](./docs/integrations.md), detailed agent setup guides live in [docs/integration-guides](./docs/integration-guides), and machine-readable wrapper examples live in [examples/integrations](./examples/integrations).
