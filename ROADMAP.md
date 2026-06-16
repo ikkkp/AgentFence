@@ -27,7 +27,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
 - Milestone 8 foundations: signed policy bundles, verification, import, organization policy templates, audit export, and local audit reports.
 
-Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, MCP SSE/streaming transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
+Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, MCP SSE/streaming transports, richer policy editing, agent-specific integration guides, and optional team/cloud features.
 
 ## Guiding Principles
 
@@ -307,7 +307,6 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 - Keep CLI, daemon, desktop, and website verification green in CI.
 - Add Codex and Claude Code integration guides with recommended wrapper commands.
 - Add richer desktop policy editing with schema validation and diffs.
-- Add desktop notifications for approval requests.
 - Add MCP SSE and streaming HTTP transport support.
 - Explore full PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.

@@ -312,6 +312,24 @@ function App() {
     setNotificationPermission(permission);
   }
 
+  async function sendTestNotification() {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+
+    let permission = Notification.permission;
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+    }
+    if (permission === "granted") {
+      new Notification("AgentFence notifications ready", {
+        body: "Approval alerts will appear here."
+      });
+    }
+  }
+
   async function runSimulator() {
     const command = parseCommandLine(simulatorInput);
     if (command.length === 0) {
@@ -606,6 +624,19 @@ function App() {
                   refreshBundleDigest();
                 }}>
                   <RefreshCw size={15} />Refresh
+                </button>
+              </div>
+              <div className="notification-settings">
+                <div>
+                  <span>Notification permission</span>
+                  <strong>{notificationPermission}</strong>
+                </div>
+                <button
+                  className="text-button"
+                  onClick={sendTestNotification}
+                  disabled={notificationPermission === "unsupported"}
+                >
+                  <Bell size={15} />Test alert
                 </button>
               </div>
               <div className="settings-grid">

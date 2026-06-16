@@ -628,6 +628,33 @@ th {
   gap: 10px;
 }
 
+.notification-settings {
+  align-items: center;
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 11px;
+}
+
+.notification-settings span,
+.notification-settings strong {
+  display: block;
+}
+
+.notification-settings span {
+  color: #607168;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.notification-settings strong {
+  color: #17211c;
+  font-size: 13px;
+}
+
 .settings-grid > div {
   background: #f8faf7;
   border: 1px solid #e4eae3;
@@ -660,5 +687,10 @@ th {
   .grid,
   .filter-row {
     grid-template-columns: 1fr;
+  }
+
+  .notification-settings {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
