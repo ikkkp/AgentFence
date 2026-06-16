@@ -345,6 +345,20 @@ enum PolicyReviewPresetCommands {
         #[arg(long)]
         yes: bool,
     },
+    Export {
+        preset: PolicyReviewPreset,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        force: bool,
+    },
+    Import {
+        input: PathBuf,
+        #[arg(long, default_value = "agentfence.policy.json")]
+        path: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1725,6 +1739,54 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
             println!("applied {} to {}", spec.slug, path.display());
             Ok(ExitCode::SUCCESS)
         }
+        PolicyReviewPresetCommands::Export {
+            preset,
+            output,
+            force,
+        } => {
+            if output.exists() && !force {
+                bail!(
+                    "{} already exists; rerun with --force to replace it",
+                    output.display()
+                );
+            }
+            let bundle = policy_review_preset_bundle(preset);
+            fs::write(&output, serde_json::to_string_pretty(&bundle)?)
+                .with_context(|| format!("failed to write review preset {}", output.display()))?;
+            println!("exported review preset {}", output.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetCommands::Import { input, path, yes } => {
+            let raw = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read review preset {}", input.display()))?;
+            let bundle: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            let proposal = proposal_from_review_preset_bundle(&bundle)?;
+            println!("{}", serde_json::to_string_pretty(&proposal)?);
+            if !yes
+                && !prompt_for_approval(
+                    "import policy review preset",
+                    "policy changes require confirmation",
+                )?
+            {
+                println!("policy review preset was not imported");
+                return Ok(ExitCode::from(13));
+            }
+
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read policy {}", path.display()))?;
+            let mut value: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse policy {}", path.display()))?;
+            apply_policy_patch(&mut value, &proposal.operations)?;
+            fs::write(&path, serde_json::to_string_pretty(&value)?)
+                .with_context(|| format!("failed to write policy {}", path.display()))?;
+            let name = bundle
+                .get("preset")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("external");
+            println!("imported {name} to {}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -1794,6 +1856,48 @@ fn policy_review_preset_proposal(preset: PolicyReviewPreset) -> PolicyPatchPropo
         ),
         operations,
     }
+}
+
+fn policy_review_preset_bundle(preset: PolicyReviewPreset) -> serde_json::Value {
+    let spec = policy_review_preset_spec(preset);
+    let packs = spec
+        .packs
+        .iter()
+        .map(|pack| policy_rule_pack_spec(*pack).slug)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "kind": "agentfence.policyReviewPreset",
+        "version": "0.1",
+        "preset": spec.slug,
+        "title": spec.title,
+        "description": spec.description,
+        "packs": packs,
+        "proposal": policy_review_preset_proposal(preset)
+    })
+}
+
+fn proposal_from_review_preset_bundle(bundle: &serde_json::Value) -> Result<PolicyPatchProposal> {
+    let kind = bundle
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .context("review preset is missing kind")?;
+    if kind != "agentfence.policyReviewPreset" {
+        bail!("unsupported review preset kind {kind}");
+    }
+    let version = bundle
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .context("review preset is missing version")?;
+    if version != "0.1" {
+        bail!("unsupported review preset version {version}");
+    }
+    serde_json::from_value(
+        bundle
+            .get("proposal")
+            .cloned()
+            .context("review preset is missing proposal")?,
+    )
+    .context("failed to parse review preset proposal")
 }
 
 fn configure_github_mcp(policy: &mut Policy, default_decision: Decision) {
@@ -4217,5 +4321,32 @@ mod tests {
             value["mcp"]["servers"]["github"]["tools"]["merge_pull_request"],
             "deny"
         );
+    }
+
+    #[test]
+    fn review_preset_bundle_roundtrips_proposal() {
+        let bundle = policy_review_preset_bundle(PolicyReviewPreset::ReleaseHardening);
+        let proposal = proposal_from_review_preset_bundle(&bundle).expect("proposal");
+        let mut value = serde_json::to_value(Policy::default()).expect("policy json");
+
+        apply_policy_patch(&mut value, &proposal.operations).expect("patch");
+
+        assert_eq!(bundle["kind"], "agentfence.policyReviewPreset");
+        assert_eq!(bundle["preset"], "release-hardening");
+        assert_eq!(value["network"]["defaultDecision"], "deny");
+    }
+
+    #[test]
+    fn rejects_unknown_review_preset_bundle_kind() {
+        let bundle = serde_json::json!({
+            "kind": "agentfence.other",
+            "version": "0.1",
+            "proposal": {
+                "summary": "nope",
+                "operations": []
+            }
+        });
+
+        assert!(proposal_from_review_preset_bundle(&bundle).is_err());
     }
 }

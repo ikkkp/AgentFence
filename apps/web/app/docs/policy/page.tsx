@@ -46,7 +46,9 @@ agentfence policy library apply release-guard --yes`}</pre>
       </p>
       <pre>{`agentfence policy review-preset list
 agentfence policy review-preset show codex-balanced
-agentfence policy review-preset apply release-hardening --yes`}</pre>
+agentfence policy review-preset apply release-hardening --yes
+agentfence policy review-preset export release-hardening --output release-hardening.review.json
+agentfence policy review-preset import release-hardening.review.json --yes`}</pre>
       <p>
         Audit-driven suggestions scan repeated approved ask decisions and emit narrower JSON Patch proposals.
       </p>

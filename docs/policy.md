@@ -206,6 +206,8 @@ Review presets combine multiple rule packs into one reviewable proposal for comm
 agentfence policy review-preset list
 agentfence policy review-preset show codex-balanced
 agentfence policy review-preset apply release-hardening --yes
+agentfence policy review-preset export release-hardening --output release-hardening.review.json
+agentfence policy review-preset import release-hardening.review.json --yes
 ```
 
 Included presets:
@@ -213,6 +215,8 @@ Included presets:
 - `codex-balanced`: local tests, dependency install review, and GitHub read-oriented MCP defaults.
 - `release-hardening`: production deploy denial, strict unknown-network handling, and gated GitHub writes.
 - `readonly-mcp`: read-oriented MCP defaults with strict unknown-network handling.
+
+Exported review presets are JSON artifacts containing metadata plus a standard policy patch proposal. Teams can review them in version control before importing them into a project policy.
 
 ## Audit-Driven Suggestions
 
