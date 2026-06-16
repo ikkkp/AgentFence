@@ -2,7 +2,7 @@
 
 AgentFence publishes two release artifact families:
 
-- CLI and daemon archives containing `agentfence`, `agentfenced`, `README.md`, and the default policy.
+- CLI and daemon archives containing `agentfence`, `agentfenced`, `README.md`, the default policy, and installer scripts.
 - Desktop bundles produced by Tauri for Windows, macOS, and Linux.
 
 ## Local Release Check
@@ -32,6 +32,11 @@ pnpm --filter @agentfence/desktop tauri:build
 The Rust binaries are written to `target/release`.
 The desktop executable and installers are written under `target/release`.
 
+CLI archives include:
+
+- `install.ps1`: copies `agentfence.exe` and `agentfenced.exe` to `%LOCALAPPDATA%\AgentFence\bin` and adds that directory to the user PATH unless `-SkipPath` is passed.
+- `install.sh`: copies `agentfence` and `agentfenced` to `$HOME/.local/bin` and appends that directory to `$HOME/.profile` when needed.
+
 ## GitHub Release Flow
 
 Create a version tag to trigger `.github/workflows/release.yml`:
@@ -49,6 +54,16 @@ The workflow builds:
 - `agentfence-desktop-windows-x64`
 - `agentfence-desktop-macos-arm64`
 - `agentfence-desktop-linux-x64`
+
+After downloading a CLI archive, users can install the binaries onto PATH:
+
+```powershell
+.\install.ps1
+```
+
+```bash
+./install.sh
+```
 
 For v0.1.x, attach the generated artifacts to a GitHub release and include the current security boundary:
 

@@ -10,6 +10,16 @@ export default function DownloadPage() {
       <pre>{`git clone https://github.com/ikkkp/AgentFence.git
 cd AgentFence
 cargo run --bin agentfence -- policy validate agentfence.policy.json`}</pre>
+      <h2>Release archives</h2>
+      <p>
+        CLI archives include `agentfence`, `agentfenced`, the default policy, and installer scripts
+        that copy binaries into a user bin directory and register it on PATH.
+      </p>
+      <pre>{`# Windows
+.\\install.ps1
+
+# macOS/Linux
+./install.sh`}</pre>
     </main>
   );
 }

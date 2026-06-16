@@ -15,7 +15,7 @@ This repository now contains the first implementation slice from the roadmap:
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
 - Next.js website shell with homepage, download, security, changelog, blog, and docs pages.
 - CI workflow for Rust and web verification.
-- Release workflow for CLI, daemon, and Tauri desktop artifacts.
+- Release workflow for CLI, daemon, installer scripts, and Tauri desktop artifacts.
 
 ## Repository Layout
 
@@ -101,6 +101,9 @@ agentfence policy validate agentfence.policy.json
 agentfence policy schema
 agentfence policy ask "allow tests but ask before dependency installs"
 agentfence policy apply --yes "deny production deploy"
+agentfence policy library list
+agentfence policy review-preset export release-hardening --output release-hardening.review.json
+agentfence policy review-preset import release-hardening.review.json --yes
 agentfence policy suggest --threshold 3 --limit 1000
 agentfence policy template list
 agentfence policy template export engineering-default --output agentfence.policy.json --force
@@ -117,7 +120,7 @@ agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude
 agentfence integrations list
 agentfence integrations show codex --format shell
-agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force
+agentfence integrations install codex --format powershell --output-dir .agentfence/wrappers --force --add-to-path
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
 agentfence audit report --format markdown --output audit-report.md
