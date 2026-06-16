@@ -2077,3 +2077,80 @@ fn local_daemon_json(
     }
     serde_json::from_str(body).context("failed to parse daemon JSON response")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_http_upstream_with_path_and_default_port() {
+        let upstream = parse_http_upstream("http://127.0.0.1:3000/mcp").expect("upstream");
+        assert_eq!(upstream.authority, "127.0.0.1:3000");
+        assert_eq!(upstream.connect_addr, "127.0.0.1:3000");
+        assert_eq!(upstream.path, "/mcp");
+
+        let upstream = parse_http_upstream("http://localhost").expect("upstream");
+        assert_eq!(upstream.authority, "localhost");
+        assert_eq!(upstream.connect_addr, "localhost:80");
+        assert_eq!(upstream.path, "/");
+    }
+
+    #[test]
+    fn rejects_non_http_upstream_urls() {
+        assert!(parse_http_upstream("https://example.com/mcp").is_err());
+    }
+
+    #[test]
+    fn parses_simple_http_response() {
+        let response =
+            b"HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n{\"ok\":true}";
+        let parsed = parse_http_response(response).expect("response");
+
+        assert_eq!(parsed.status, 201);
+        assert_eq!(parsed.content_type, "application/json");
+        assert_eq!(parsed.body, br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn quotes_shell_and_powershell_arguments() {
+        assert_eq!(
+            quote_command(
+                &["agentfence", "run", "--", "npm install"],
+                IntegrationFormat::Shell
+            ),
+            "agentfence run -- 'npm install'"
+        );
+        assert_eq!(
+            quote_arg("can't", IntegrationFormat::PowerShell),
+            "'can''t'"
+        );
+    }
+
+    #[test]
+    fn audit_report_summarizes_and_escapes_review_events() {
+        let events = vec![
+            AuditEvent::new("codex", "shell.exec", "git status", "allow", "low", "ok"),
+            AuditEvent::new(
+                "claude|code",
+                "mcp.tool",
+                "github/merge\npull_request",
+                "deny",
+                "medium",
+                "blocked",
+            ),
+        ];
+        let report = audit_report_json(&events, 20);
+
+        assert_eq!(report["totalEvents"], 2);
+        assert_eq!(report["decisions"]["allow"], 1);
+        assert_eq!(report["decisions"]["deny"], 1);
+        assert_eq!(
+            report["reviewEvents"]
+                .as_array()
+                .expect("review events")
+                .len(),
+            1
+        );
+        assert_eq!(escape_markdown_table("a|b\nc"), "a\\|b c");
+    }
+}
