@@ -18,7 +18,7 @@ export default function SecurityPage() {
       <ul>
         <li>Shell control cannot intercept commands an agent launches outside AgentFence or a future full PTY integration.</li>
         <li>Full network enforcement still requires a proxy or OS-level integration in a later milestone.</li>
-        <li>Stream-aware filtering is limited; list filtering applies to complete JSON responses.</li>
+        <li>Stream-aware filtering is limited; list filtering applies to complete JSON and SSE list responses.</li>
       </ul>
     </main>
   );

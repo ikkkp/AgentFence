@@ -28,7 +28,7 @@ agentfence mcp http-proxy \
   --upstream http://127.0.0.1:3000/mcp
 ```
 
-Point the MCP client at `http://127.0.0.1:37422`. The proxy enforces POST JSON-RPC calls and passes through GET/SSE or chunked streaming responses after request-level checks.
+Point the MCP client at `http://127.0.0.1:37422`. The proxy enforces POST JSON-RPC calls, filters denied entries from complete JSON and SSE list responses, and passes other streaming responses through after request-level checks.
 
 ## Policy Shape
 

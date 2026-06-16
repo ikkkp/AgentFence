@@ -1974,6 +1974,13 @@ struct SimpleHttpResponse {
     body: Vec<u8>,
 }
 
+#[derive(Clone, Copy)]
+struct HttpListStreamFilter<'a> {
+    policy: &'a Policy,
+    server: &'a str,
+    method: &'a str,
+}
+
 fn mcp_http_proxy(args: McpHttpProxyArgs) -> Result<ExitCode> {
     let cwd = env::current_dir().context("failed to read current directory")?;
     let policy_path = resolve_policy_path(args.policy.as_deref(), &cwd)?;
@@ -2152,7 +2159,13 @@ fn handle_mcp_http_connection(
         }
     }
 
-    match forward_http_request(upstream, &request, stream)? {
+    let stream_filter = list_method.as_deref().map(|method| HttpListStreamFilter {
+        policy,
+        server: &args.server,
+        method,
+    });
+
+    match forward_http_request(upstream, &request, stream, stream_filter)? {
         ForwardedHttpResponse::Complete(mut response) => {
             if let Some(method) = list_method {
                 if let Ok(response_json) =
@@ -2275,7 +2288,7 @@ fn forward_http_stream(
     request: &SimpleHttpRequest,
     client: &mut TcpStream,
 ) -> Result<()> {
-    match forward_http_request(upstream, request, client)? {
+    match forward_http_request(upstream, request, client, None)? {
         ForwardedHttpResponse::Complete(response) => write_http_response(
             client,
             response.status,
@@ -2290,6 +2303,7 @@ fn forward_http_request(
     upstream: &HttpUpstream,
     request: &SimpleHttpRequest,
     client: &mut TcpStream,
+    stream_filter: Option<HttpListStreamFilter<'_>>,
 ) -> Result<ForwardedHttpResponse> {
     let mut stream = TcpStream::connect(&upstream.connect_addr)
         .with_context(|| format!("failed to connect to upstream {}", upstream.connect_addr))?;
@@ -2298,6 +2312,40 @@ fn forward_http_request(
     let (status, reason, headers) = read_http_response_head(&mut reader)?;
 
     if response_should_stream(&request.method, &headers) {
+        if let Some(filter) = stream_filter {
+            if response_is_event_stream(&headers) {
+                write_http_filtered_stream_head(client, status, &reason, &headers)?;
+                let removed = if response_is_chunked(&headers) {
+                    let chunked = ChunkedBodyReader::new(reader);
+                    let mut event_reader = BufReader::new(chunked);
+                    filter_sse_list_stream(
+                        &mut event_reader,
+                        client,
+                        filter.policy,
+                        filter.server,
+                        filter.method,
+                    )?
+                } else {
+                    filter_sse_list_stream(
+                        &mut reader,
+                        client,
+                        filter.policy,
+                        filter.server,
+                        filter.method,
+                    )?
+                };
+                if removed > 0 {
+                    eprintln!(
+                        "agentfence mcp http-proxy: filtered {removed} streamed item(s) from {}",
+                        filter.method
+                    );
+                }
+                client
+                    .flush()
+                    .context("failed to flush filtered streamed HTTP response")?;
+                return Ok(ForwardedHttpResponse::Streamed);
+            }
+        }
         write_http_response_head(client, status, &reason, &headers)?;
         io::copy(&mut reader, client).context("failed to stream upstream response")?;
         client
@@ -2445,6 +2493,129 @@ fn response_should_stream(method: &str, headers: &[(String, String)]) -> bool {
         || (method == "GET" && header_value(headers, "content-length").is_none())
 }
 
+fn response_is_event_stream(headers: &[(String, String)]) -> bool {
+    header_value(headers, "content-type").is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("text/event-stream")
+    })
+}
+
+fn response_is_chunked(headers: &[(String, String)]) -> bool {
+    header_value(headers, "transfer-encoding")
+        .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"))
+}
+
+fn filter_sse_list_stream<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    policy: &Policy,
+    server: &str,
+    method: &str,
+) -> Result<usize>
+where
+    R: BufRead,
+    W: Write,
+{
+    let mut removed_total = 0_usize;
+    let mut event_lines = Vec::new();
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .context("failed to read SSE event line")?;
+        if read == 0 {
+            if !event_lines.is_empty() {
+                removed_total +=
+                    write_filtered_sse_event(writer, &event_lines, policy, server, method)?;
+            }
+            break;
+        }
+
+        let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
+        if trimmed.is_empty() {
+            removed_total +=
+                write_filtered_sse_event(writer, &event_lines, policy, server, method)?;
+            event_lines.clear();
+        } else {
+            event_lines.push(trimmed);
+        }
+    }
+
+    Ok(removed_total)
+}
+
+fn write_filtered_sse_event<W>(
+    writer: &mut W,
+    lines: &[String],
+    policy: &Policy,
+    server: &str,
+    method: &str,
+) -> Result<usize>
+where
+    W: Write,
+{
+    if lines.is_empty() {
+        writer
+            .write_all(b"\n")
+            .context("failed to write empty SSE event")?;
+        return Ok(0);
+    }
+
+    let data = lines
+        .iter()
+        .filter_map(|line| sse_data_value(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !data.is_empty() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) {
+            let filtered = agentfence_mcp::filter_list_response(policy, server, method, &value);
+            if filtered.removed > 0 {
+                for line in lines.iter().filter(|line| sse_data_value(line).is_none()) {
+                    writer
+                        .write_all(line.as_bytes())
+                        .context("failed to write SSE event field")?;
+                    writer
+                        .write_all(b"\n")
+                        .context("failed to write SSE event newline")?;
+                }
+                writer
+                    .write_all(b"data: ")
+                    .context("failed to write SSE data prefix")?;
+                serde_json::to_writer(&mut *writer, &filtered.response)
+                    .context("failed to encode filtered SSE data")?;
+                writer
+                    .write_all(b"\n\n")
+                    .context("failed to finish filtered SSE event")?;
+                return Ok(filtered.removed);
+            }
+        }
+    }
+
+    for line in lines {
+        writer
+            .write_all(line.as_bytes())
+            .context("failed to write SSE event line")?;
+        writer
+            .write_all(b"\n")
+            .context("failed to write SSE event newline")?;
+    }
+    writer
+        .write_all(b"\n")
+        .context("failed to finish SSE event")?;
+    Ok(0)
+}
+
+fn sse_data_value(line: &str) -> Option<&str> {
+    let value = line.strip_prefix("data:")?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
+}
+
 fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -2544,6 +2715,150 @@ fn write_http_response_head(
         .flush()
         .context("failed to flush HTTP response head")?;
     Ok(())
+}
+
+fn write_http_filtered_stream_head<W>(
+    stream: &mut W,
+    status: u16,
+    reason: &str,
+    headers: &[(String, String)],
+) -> Result<()>
+where
+    W: Write,
+{
+    write!(stream, "HTTP/1.1 {status} {reason}\r\n")
+        .context("failed to write HTTP response status")?;
+    let mut has_content_type = false;
+    for (name, value) in headers {
+        if !http_filtered_stream_header_is_forwardable(name) {
+            continue;
+        }
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        write!(stream, "{name}: {value}\r\n").context("failed to write HTTP response header")?;
+    }
+    if !has_content_type {
+        stream
+            .write_all(b"Content-Type: text/event-stream\r\n")
+            .context("failed to write HTTP content type")?;
+    }
+    stream
+        .write_all(b"Connection: close\r\n\r\n")
+        .context("failed to finish filtered HTTP response headers")?;
+    stream
+        .flush()
+        .context("failed to flush filtered HTTP response head")?;
+    Ok(())
+}
+
+fn http_filtered_stream_header_is_forwardable(name: &str) -> bool {
+    !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection" | "content-length" | "transfer-encoding" | "proxy-connection"
+    )
+}
+
+struct ChunkedBodyReader<R> {
+    reader: R,
+    remaining: usize,
+    done: bool,
+}
+
+impl<R> ChunkedBodyReader<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader,
+            remaining: 0,
+            done: false,
+        }
+    }
+}
+
+impl<R> Read for ChunkedBodyReader<R>
+where
+    R: BufRead,
+{
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() || self.done {
+            return Ok(0);
+        }
+
+        if self.remaining == 0 {
+            self.remaining = self.read_next_chunk_size()?;
+            if self.done {
+                return Ok(0);
+            }
+        }
+
+        let to_read = self.remaining.min(output.len());
+        let read = self.reader.read(&mut output[..to_read])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected EOF in HTTP chunk",
+            ));
+        }
+        self.remaining -= read;
+        if self.remaining == 0 {
+            self.consume_chunk_crlf()?;
+        }
+        Ok(read)
+    }
+}
+
+impl<R> ChunkedBodyReader<R>
+where
+    R: BufRead,
+{
+    fn read_next_chunk_size(&mut self) -> io::Result<usize> {
+        let mut line = String::new();
+        self.reader.read_line(&mut line)?;
+        if line.is_empty() {
+            self.done = true;
+            return Ok(0);
+        }
+        let raw_size = line
+            .trim_end_matches(['\r', '\n'])
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        let size = usize::from_str_radix(raw_size, 16).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid HTTP chunk size {raw_size}: {error}"),
+            )
+        })?;
+        if size == 0 {
+            self.done = true;
+            self.consume_trailers()?;
+        }
+        Ok(size)
+    }
+
+    fn consume_chunk_crlf(&mut self) -> io::Result<()> {
+        let mut crlf = [0_u8; 2];
+        self.reader.read_exact(&mut crlf)?;
+        if crlf != *b"\r\n" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid HTTP chunk terminator",
+            ));
+        }
+        Ok(())
+    }
+
+    fn consume_trailers(&mut self) -> io::Result<()> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            self.reader.read_line(&mut line)?;
+            if line.is_empty() || line.trim_end_matches(['\r', '\n']).is_empty() {
+                return Ok(());
+            }
+        }
+    }
 }
 
 fn default_http_reason(status: u16) -> &'static str {
@@ -3046,6 +3361,105 @@ mod tests {
 
         let sized_get = vec![("Content-Length".to_string(), "2".to_string())];
         assert!(!response_should_stream("GET", &sized_get));
+    }
+
+    #[test]
+    fn filters_sse_list_response_events() {
+        let policy = policy_denying_merge_pull_request();
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "tools": [
+                    { "name": "list_pull_requests" },
+                    { "name": "merge_pull_request" }
+                ]
+            }
+        });
+        let event_stream = format!(
+            "event: message\ndata: {}\n\n: keepalive\n\ndata: [DONE]\n\n",
+            payload
+        );
+        let mut reader = BufReader::new(std::io::Cursor::new(event_stream.into_bytes()));
+        let mut output = Vec::new();
+
+        let removed =
+            filter_sse_list_stream(&mut reader, &mut output, &policy, "github", "tools/list")
+                .expect("filter");
+        let output = String::from_utf8(output).expect("utf8");
+
+        assert_eq!(removed, 1);
+        assert!(output.contains("event: message"));
+        assert!(output.contains("list_pull_requests"));
+        assert!(!output.contains("merge_pull_request"));
+        assert!(output.contains(": keepalive"));
+        assert!(output.contains("data: [DONE]"));
+    }
+
+    #[test]
+    fn filters_chunked_sse_list_response_events() {
+        let policy = policy_denying_merge_pull_request();
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "tools": [
+                    { "name": "list_pull_requests" },
+                    { "name": "merge_pull_request" }
+                ]
+            }
+        });
+        let body = format!("data: {}\n\n", payload);
+        let chunked = format!("{:x}\r\n{}\r\n0\r\n\r\n", body.len(), body);
+        let chunked_reader =
+            ChunkedBodyReader::new(BufReader::new(std::io::Cursor::new(chunked.into_bytes())));
+        let mut reader = BufReader::new(chunked_reader);
+        let mut output = Vec::new();
+
+        let removed =
+            filter_sse_list_stream(&mut reader, &mut output, &policy, "github", "tools/list")
+                .expect("filter");
+        let output = String::from_utf8(output).expect("utf8");
+
+        assert_eq!(removed, 1);
+        assert!(output.contains("list_pull_requests"));
+        assert!(!output.contains("merge_pull_request"));
+    }
+
+    #[test]
+    fn filtered_stream_head_removes_length_and_transfer_encoding() {
+        let headers = vec![
+            ("Content-Type".to_string(), "text/event-stream".to_string()),
+            ("Transfer-Encoding".to_string(), "chunked".to_string()),
+            ("Content-Length".to_string(), "120".to_string()),
+            ("Cache-Control".to_string(), "no-cache".to_string()),
+        ];
+        let mut output = Vec::new();
+
+        write_http_filtered_stream_head(&mut output, 200, "OK", &headers).expect("head");
+        let output = String::from_utf8(output).expect("utf8");
+
+        assert!(output.contains("Content-Type: text/event-stream"));
+        assert!(output.contains("Cache-Control: no-cache"));
+        assert!(output.contains("Connection: close"));
+        assert!(!output.contains("Transfer-Encoding"));
+        assert!(!output.contains("Content-Length"));
+    }
+
+    fn policy_denying_merge_pull_request() -> Policy {
+        let mut tools = BTreeMap::new();
+        tools.insert("merge_pull_request".to_string(), Decision::Deny);
+        tools.insert("list_pull_requests".to_string(), Decision::Allow);
+
+        let mut policy = Policy::default();
+        policy.mcp.servers.insert(
+            "github".to_string(),
+            McpServerPolicy {
+                tools,
+                ..McpServerPolicy::default()
+            },
+        );
+        policy
     }
 
     #[test]

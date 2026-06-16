@@ -77,7 +77,7 @@ agentfence mcp http-proxy \
   --upstream http://127.0.0.1:3000/mcp
 ```
 
-The HTTP proxy uses the same policy, rate limit, ask-mode, list filtering, and audit behavior as the stdio proxy for JSON request and complete JSON response bodies. It also proxies GET requests and streams `text/event-stream`, chunked, or open-ended GET responses through to the client. List filtering is applied only when the upstream response is a complete JSON body.
+The HTTP proxy uses the same policy, rate limit, ask-mode, list filtering, and audit behavior as the stdio proxy for JSON request and response bodies. It also proxies GET requests and streaming responses. For POST list requests, denied entries are filtered from complete JSON bodies and from JSON-RPC responses carried in SSE `data:` events, including chunked SSE streams. Non-SSE streaming payloads are passed through after request-level checks.
 
 ## Rate Limits
 
@@ -109,4 +109,4 @@ The proxy should:
 
 - Register upstream MCP servers.
 - Redact sensitive outputs before audit logging.
-- Add deeper stream-aware filtering for list responses that arrive over event streams.
+- Add deeper stream-aware filtering for non-SSE chunked list responses.
