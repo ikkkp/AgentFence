@@ -24,7 +24,7 @@ export default function McpPage() {
   --upstream http://127.0.0.1:3000/mcp`}</pre>
       <p>
         The HTTP proxy applies the same checks to HTTP POST JSON-RPC bodies, filters denied list entries
-        from complete JSON and SSE list responses, and passes other streaming responses through after
+        from complete JSON, chunked JSON, and SSE list responses, and passes other streaming responses through after
         request-level checks.
       </p>
       <h2>Rate limits</h2>

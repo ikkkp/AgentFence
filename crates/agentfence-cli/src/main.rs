@@ -2345,6 +2345,26 @@ fn forward_http_request(
                     .context("failed to flush filtered streamed HTTP response")?;
                 return Ok(ForwardedHttpResponse::Streamed);
             }
+            if response_is_chunked(&headers) && response_is_json(&headers) {
+                let mut body = Vec::new();
+                let mut chunked = ChunkedBodyReader::new(reader);
+                chunked
+                    .read_to_end(&mut body)
+                    .context("failed to read chunked JSON list response")?;
+                let removed =
+                    filter_list_json_body(&mut body, filter.policy, filter.server, filter.method)?;
+                if removed > 0 {
+                    eprintln!(
+                        "agentfence mcp http-proxy: filtered {removed} chunked item(s) from {}",
+                        filter.method
+                    );
+                }
+                let content_type = header_value(&headers, "content-type")
+                    .unwrap_or("application/json")
+                    .to_string();
+                write_http_response(client, status, &content_type, &body)?;
+                return Ok(ForwardedHttpResponse::Streamed);
+            }
         }
         write_http_response_head(client, status, &reason, &headers)?;
         io::copy(&mut reader, client).context("failed to stream upstream response")?;
@@ -2507,6 +2527,34 @@ fn response_is_event_stream(headers: &[(String, String)]) -> bool {
 fn response_is_chunked(headers: &[(String, String)]) -> bool {
     header_value(headers, "transfer-encoding")
         .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"))
+}
+
+fn response_is_json(headers: &[(String, String)]) -> bool {
+    header_value(headers, "content-type").is_some_and(|value| {
+        let content_type = value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        content_type == "application/json" || content_type.ends_with("+json")
+    })
+}
+
+fn filter_list_json_body(
+    body: &mut Vec<u8>,
+    policy: &Policy,
+    server: &str,
+    method: &str,
+) -> Result<usize> {
+    let Ok(response_json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Ok(0);
+    };
+    let filtered = agentfence_mcp::filter_list_response(policy, server, method, &response_json);
+    if filtered.removed > 0 {
+        *body = serde_json::to_vec(&filtered.response)?;
+    }
+    Ok(filtered.removed)
 }
 
 fn filter_sse_list_stream<R, W>(
@@ -3424,6 +3472,30 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(output.contains("list_pull_requests"));
         assert!(!output.contains("merge_pull_request"));
+    }
+
+    #[test]
+    fn filters_chunked_json_list_response_body() {
+        let policy = policy_denying_merge_pull_request();
+        let mut body = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "tools": [
+                    { "name": "list_pull_requests" },
+                    { "name": "merge_pull_request" }
+                ]
+            }
+        }))
+        .expect("json");
+
+        let removed =
+            filter_list_json_body(&mut body, &policy, "github", "tools/list").expect("filter");
+        let body = String::from_utf8(body).expect("utf8");
+
+        assert_eq!(removed, 1);
+        assert!(body.contains("list_pull_requests"));
+        assert!(!body.contains("merge_pull_request"));
     }
 
     #[test]

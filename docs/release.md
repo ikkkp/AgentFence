@@ -54,6 +54,6 @@ For v0.1.x, attach the generated artifacts to a GitHub release and include the c
 
 - Shell commands are enforced when launched through `agentfence run` or entered in `agentfence shell`.
 - URL-like and common Git/SSH remotes found in guarded shell commands are checked against network policy before execution.
-- MCP stdio calls are enforced through `agentfence mcp proxy`; HTTP JSON-RPC, GET/SSE stream requests, and SSE list filtering are routed through `agentfence mcp http-proxy`.
+- MCP stdio calls are enforced through `agentfence mcp proxy`; HTTP JSON-RPC, GET/SSE stream requests, chunked JSON list filtering, and SSE list filtering are routed through `agentfence mcp http-proxy`.
 - Filesystem, network, skill, and MCP checks are available through the daemon API.
 - OS-level network and filesystem interception remain future hardening items.
