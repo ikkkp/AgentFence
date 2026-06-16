@@ -180,6 +180,24 @@ agentfence policy apply --yes "deny production deploy"
 
 `policy apply` prints the proposed operations first, applies them to the policy JSON, then validates the patched policy before writing it back.
 
+## Policy Rule Library
+
+Reusable rule packs provide reviewable JSON Patch proposals for common workflows. Use `show` to inspect a pack before applying it.
+
+```bash
+agentfence policy library list
+agentfence policy library show local-tests
+agentfence policy library apply release-guard --yes
+```
+
+Included packs:
+
+- `local-tests`: allow common local build, format, lint, and test commands.
+- `dependency-installs`: ask before package or toolchain installation commands.
+- `release-guard`: deny production deploy commands and deployment skills.
+- `github-readonly-mcp`: allow common GitHub read tools, ask for PR creation, and deny merge/release tools.
+- `network-strict`: deny unknown network domains while keeping common registries explicit.
+
 ## Audit-Driven Suggestions
 
 AgentFence can scan recent audit events and suggest narrower policy rules for actions that were repeatedly approved after an `ask` decision. Suggestions are emitted as JSON Patch proposals and are not applied automatically.

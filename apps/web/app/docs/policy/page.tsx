@@ -33,6 +33,13 @@ agentfence skill check --name code-review`}</pre>
         Policy changes can be applied after confirmation, and the patched JSON is validated before it is written.
       </p>
       <pre>{`agentfence policy apply "deny production deploy"`}</pre>
+      <h2>Rule library</h2>
+      <p>
+        Reusable rule packs provide reviewable JSON Patch proposals for common workflows.
+      </p>
+      <pre>{`agentfence policy library list
+agentfence policy library show local-tests
+agentfence policy library apply release-guard --yes`}</pre>
       <p>
         Audit-driven suggestions scan repeated approved ask decisions and emit narrower JSON Patch proposals.
       </p>

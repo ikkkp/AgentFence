@@ -12,13 +12,13 @@ use std::time::{Duration, Instant};
 
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
 use agentfence_policy::{
-    ActorPolicy, Decision, DecisionResult, FilesystemRequest, McpServerPolicy, NetworkRequest,
-    Policy, PolicyBundle, PolicyBundleKeyPair, PolicyObservation, PolicyPreset, RateLimitPolicy,
-    ShellMatch, ShellRequest, ShellRule, SkillRequest, apply_policy_patch, create_policy_bundle,
-    discover_policy, evaluate_filesystem, evaluate_network, evaluate_shell, evaluate_skill,
-    generate_policy_bundle_keypair, load_policy, policy_schema_json, preset_policy,
-    propose_policy_patch, save_policy, sign_policy_bundle, suggest_policy_patches,
-    verify_policy_bundle,
+    ActorPolicy, Decision, DecisionResult, FilesystemRequest, JsonPatchOperation, McpServerPolicy,
+    NetworkRequest, Policy, PolicyBundle, PolicyBundleKeyPair, PolicyObservation,
+    PolicyPatchProposal, PolicyPreset, RateLimitPolicy, ShellMatch, ShellRequest, ShellRule,
+    SkillRequest, apply_policy_patch, create_policy_bundle, discover_policy, evaluate_filesystem,
+    evaluate_network, evaluate_shell, evaluate_skill, generate_policy_bundle_keypair, load_policy,
+    policy_schema_json, preset_policy, propose_policy_patch, save_policy, sign_policy_bundle,
+    suggest_policy_patches, verify_policy_bundle,
 };
 use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result, bail};
@@ -255,6 +255,10 @@ enum PolicyCommands {
         #[command(subcommand)]
         command: PolicyTemplateCommands,
     },
+    Library {
+        #[command(subcommand)]
+        command: PolicyLibraryCommands,
+    },
     Bundle {
         #[command(subcommand)]
         command: PolicyBundleCommands,
@@ -291,6 +295,37 @@ struct PolicyTemplateSpec {
     title: &'static str,
     description: &'static str,
     preset: PolicyPreset,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyLibraryCommands {
+    List,
+    Show {
+        pack: PolicyRulePack,
+    },
+    Apply {
+        pack: PolicyRulePack,
+        #[arg(long, default_value = "agentfence.policy.json")]
+        path: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PolicyRulePack {
+    LocalTests,
+    DependencyInstalls,
+    ReleaseGuard,
+    GithubReadonlyMcp,
+    NetworkStrict,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PolicyRulePackSpec {
+    slug: &'static str,
+    title: &'static str,
+    description: &'static str,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1233,6 +1268,7 @@ fn policy_command(command: PolicyCommands) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         PolicyCommands::Template { command } => policy_template_command(command),
+        PolicyCommands::Library { command } => policy_library_command(command),
         PolicyCommands::Bundle { command } => policy_bundle_command(command),
     }
 }
@@ -1387,6 +1423,212 @@ fn build_policy_template(template: PolicyTemplate, project: Option<String>) -> P
     }
 
     policy
+}
+
+fn policy_library_command(command: PolicyLibraryCommands) -> Result<ExitCode> {
+    match command {
+        PolicyLibraryCommands::List => {
+            for pack in policy_rule_packs() {
+                let spec = policy_rule_pack_spec(pack);
+                println!("{:<20} {}", spec.slug, spec.description);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyLibraryCommands::Show { pack } => {
+            let spec = policy_rule_pack_spec(pack);
+            let proposal = policy_rule_pack_proposal(pack);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "pack": spec.slug,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "proposal": proposal
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyLibraryCommands::Apply { pack, path, yes } => {
+            let spec = policy_rule_pack_spec(pack);
+            let proposal = policy_rule_pack_proposal(pack);
+            println!("{}", serde_json::to_string_pretty(&proposal)?);
+            if !yes
+                && !prompt_for_approval(
+                    "apply policy rule pack",
+                    "policy changes require confirmation",
+                )?
+            {
+                println!("policy rule pack was not applied");
+                return Ok(ExitCode::from(13));
+            }
+
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read policy {}", path.display()))?;
+            let mut value: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse policy {}", path.display()))?;
+            apply_policy_patch(&mut value, &proposal.operations)?;
+            fs::write(&path, serde_json::to_string_pretty(&value)?)
+                .with_context(|| format!("failed to write policy {}", path.display()))?;
+            println!("applied {} to {}", spec.slug, path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn policy_rule_packs() -> [PolicyRulePack; 5] {
+    [
+        PolicyRulePack::LocalTests,
+        PolicyRulePack::DependencyInstalls,
+        PolicyRulePack::ReleaseGuard,
+        PolicyRulePack::GithubReadonlyMcp,
+        PolicyRulePack::NetworkStrict,
+    ]
+}
+
+fn policy_rule_pack_spec(pack: PolicyRulePack) -> PolicyRulePackSpec {
+    match pack {
+        PolicyRulePack::LocalTests => PolicyRulePackSpec {
+            slug: "local-tests",
+            title: "Local Tests",
+            description: "Allow common local build, format, lint, and test commands.",
+        },
+        PolicyRulePack::DependencyInstalls => PolicyRulePackSpec {
+            slug: "dependency-installs",
+            title: "Dependency Installs",
+            description: "Ask before commands that install dependencies or toolchains.",
+        },
+        PolicyRulePack::ReleaseGuard => PolicyRulePackSpec {
+            slug: "release-guard",
+            title: "Release Guard",
+            description: "Deny production deploy shell commands and deployment skills.",
+        },
+        PolicyRulePack::GithubReadonlyMcp => PolicyRulePackSpec {
+            slug: "github-readonly-mcp",
+            title: "GitHub Read-Only MCP",
+            description: "Allow common GitHub read tools, ask for PR creation, and deny merges.",
+        },
+        PolicyRulePack::NetworkStrict => PolicyRulePackSpec {
+            slug: "network-strict",
+            title: "Network Strict",
+            description: "Deny unknown network domains while keeping common registries explicit.",
+        },
+    }
+}
+
+fn policy_rule_pack_proposal(pack: PolicyRulePack) -> PolicyPatchProposal {
+    let spec = policy_rule_pack_spec(pack);
+    let operations = match pack {
+        PolicyRulePack::LocalTests => vec![JsonPatchOperation {
+            op: "add".to_string(),
+            path: "/shell/rules/-".to_string(),
+            value: serde_json::json!({
+                "id": "allow-local-tests",
+                "description": "Allow common local verification commands.",
+                "match": {
+                    "commands": [
+                        "cargo test",
+                        "cargo check",
+                        "cargo fmt",
+                        "pnpm test",
+                        "pnpm typecheck",
+                        "pnpm lint",
+                        "npm test"
+                    ]
+                },
+                "decision": "allow",
+                "reason": "local verification commands are allowed"
+            }),
+        }],
+        PolicyRulePack::DependencyInstalls => vec![JsonPatchOperation {
+            op: "add".to_string(),
+            path: "/shell/rules/-".to_string(),
+            value: serde_json::json!({
+                "id": "ask-package-install",
+                "description": "Ask before dependency or toolchain installation.",
+                "match": {
+                    "commands": [
+                        "cargo install",
+                        "npm install",
+                        "pnpm install",
+                        "yarn install",
+                        "pip install"
+                    ],
+                    "risks": ["high"]
+                },
+                "decision": "ask",
+                "reason": "dependency installation can modify the environment"
+            }),
+        }],
+        PolicyRulePack::ReleaseGuard => vec![
+            JsonPatchOperation {
+                op: "add".to_string(),
+                path: "/shell/rules/-".to_string(),
+                value: serde_json::json!({
+                    "id": "deny-production-deploy",
+                    "description": "Deny production deployment commands.",
+                    "match": {
+                        "patterns": [
+                            "deploy production",
+                            "vercel --prod",
+                            "fly deploy",
+                            "kubectl apply"
+                        ]
+                    },
+                    "decision": "deny",
+                    "reason": "production deployments are denied by policy"
+                }),
+            },
+            JsonPatchOperation {
+                op: "add".to_string(),
+                path: "/skills/deny/-".to_string(),
+                value: serde_json::json!("deploy-production"),
+            },
+        ],
+        PolicyRulePack::GithubReadonlyMcp => vec![JsonPatchOperation {
+            op: "add".to_string(),
+            path: "/mcp/servers/github".to_string(),
+            value: serde_json::json!({
+                "enabled": true,
+                "decision": "ask",
+                "rateLimit": {
+                    "enabled": true,
+                    "maxRequests": 30,
+                    "windowSeconds": 60
+                },
+                "tools": {
+                    "list_issues": "allow",
+                    "list_pull_requests": "allow",
+                    "get_issue": "allow",
+                    "get_pull_request": "allow",
+                    "create_pull_request": "ask",
+                    "merge_pull_request": "deny",
+                    "create_release": "deny"
+                }
+            }),
+        }],
+        PolicyRulePack::NetworkStrict => vec![
+            JsonPatchOperation {
+                op: "replace".to_string(),
+                path: "/network/defaultDecision".to_string(),
+                value: serde_json::json!("deny"),
+            },
+            JsonPatchOperation {
+                op: "replace".to_string(),
+                path: "/network/allowDomains".to_string(),
+                value: serde_json::json!([
+                    "github.com",
+                    "registry.npmjs.org",
+                    "pypi.org",
+                    "crates.io"
+                ]),
+            },
+        ],
+    };
+
+    PolicyPatchProposal {
+        summary: format!("Apply AgentFence policy rule pack `{}`.", spec.slug),
+        operations,
+    }
 }
 
 fn configure_github_mcp(policy: &mut Policy, default_decision: Decision) {
@@ -3716,6 +3958,57 @@ mod tests {
                 .rules
                 .iter()
                 .any(|rule| rule.id == "deny-release-publish")
+        );
+    }
+
+    #[test]
+    fn policy_rule_packs_have_patch_operations() {
+        for pack in policy_rule_packs() {
+            let spec = policy_rule_pack_spec(pack);
+            let proposal = policy_rule_pack_proposal(pack);
+            assert!(
+                !proposal.operations.is_empty(),
+                "{} should have patch operations",
+                spec.slug
+            );
+            assert!(proposal.summary.contains(spec.slug));
+        }
+    }
+
+    #[test]
+    fn release_guard_rule_pack_applies_to_default_policy() {
+        let mut value = serde_json::to_value(Policy::default()).expect("policy json");
+        let proposal = policy_rule_pack_proposal(PolicyRulePack::ReleaseGuard);
+
+        apply_policy_patch(&mut value, &proposal.operations).expect("patch");
+
+        let rules = value["shell"]["rules"].as_array().expect("rules");
+        assert!(
+            rules
+                .iter()
+                .any(|rule| rule["id"] == "deny-production-deploy")
+        );
+        assert!(
+            value["skills"]["deny"]
+                .as_array()
+                .expect("skill deny")
+                .contains(&serde_json::json!("deploy-production"))
+        );
+    }
+
+    #[test]
+    fn network_strict_rule_pack_denies_unknown_domains() {
+        let mut value = serde_json::to_value(Policy::default()).expect("policy json");
+        let proposal = policy_rule_pack_proposal(PolicyRulePack::NetworkStrict);
+
+        apply_policy_patch(&mut value, &proposal.operations).expect("patch");
+
+        assert_eq!(value["network"]["defaultDecision"], "deny");
+        assert!(
+            value["network"]["allowDomains"]
+                .as_array()
+                .expect("allow domains")
+                .contains(&serde_json::json!("github.com"))
         );
     }
 }

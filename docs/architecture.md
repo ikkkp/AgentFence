@@ -83,7 +83,7 @@ The public website lives in `apps/web`. It uses Next.js and contains the marketi
 
 ### Policy Assistant
 
-The policy assistant starts as a deterministic proposal generator in `crates/agentfence-policy`. It converts common natural-language permission requests into JSON Patch operations and intentionally does not apply them automatically. It also scans recent audit observations to suggest exact allow rules for repeatedly approved `ask` decisions, exposed through `agentfence policy suggest` and `GET /policy/suggestions`.
+The policy assistant starts as a deterministic proposal generator in `crates/agentfence-policy`. It converts common natural-language permission requests into JSON Patch operations and intentionally does not apply them automatically. The CLI also exposes a reusable policy rule library through `agentfence policy library`, and scans recent audit observations to suggest exact allow rules for repeatedly approved `ask` decisions through `agentfence policy suggest` and `GET /policy/suggestions`.
 
 ### Policy Simulator
 
