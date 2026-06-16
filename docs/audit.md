@@ -19,6 +19,17 @@ agentfence audit export --format csv --limit 500
 
 ## Daemon
 
+Read recent rows directly:
+
+```bash
+curl "http://127.0.0.1:37421/audit?limit=50"
+curl "http://127.0.0.1:37421/audit?limit=50&actor=codex&decision=deny&action=shell.exec"
+```
+
+Supported filters are exact matches for `actor`, `decision`, and `action`.
+
+Export recent rows:
+
 ```bash
 curl "http://127.0.0.1:37421/audit/export?format=json&limit=1000"
 curl "http://127.0.0.1:37421/audit/export?format=csv&limit=1000"

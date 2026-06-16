@@ -6,7 +6,7 @@ use std::{env, fs};
 use agentfence_approval::{
     ApprovalCreate, ApprovalQueue, ApprovalRequest, ApprovalResolve, ApprovalStatus,
 };
-use agentfence_audit::{AuditExportFormat, AuditStore};
+use agentfence_audit::{AuditExportFormat, AuditFilter, AuditStore};
 use agentfence_mcp::McpAccessRequest;
 use agentfence_policy::{
     Decision, DecisionResult, FilesystemRequest, NetworkRequest, Policy, PolicyBundle,
@@ -100,6 +100,12 @@ struct NetworkSimulationDecision {
 struct AuditQuery {
     #[serde(default = "default_limit")]
     limit: usize,
+    #[serde(default)]
+    actor: Option<String>,
+    #[serde(default)]
+    decision: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,7 +281,14 @@ async fn audit(
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let store = AuditStore::open(&state.audit_path)?;
-    let events = store.list_recent(query.limit)?;
+    let events = store.list_filtered(
+        query.limit,
+        &AuditFilter {
+            actor: query.actor,
+            decision: query.decision,
+            action: query.action,
+        },
+    )?;
     Ok(Json(serde_json::to_value(events)?))
 }
 

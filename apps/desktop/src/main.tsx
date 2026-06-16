@@ -17,6 +17,7 @@ import {
 import "./styles.css";
 
 const daemonBase = "http://127.0.0.1:37421";
+type AuditDecisionFilter = "all" | "allow" | "deny" | "ask";
 
 const fallbackApprovals: ApprovalRequest[] = [
   {
@@ -92,6 +93,9 @@ function App() {
   const [daemon, setDaemon] = useState<"checking" | "ready" | "offline">("checking");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>(fallbackApprovals);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(fallbackAudit);
+  const [auditActorFilter, setAuditActorFilter] = useState("");
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [auditDecisionFilter, setAuditDecisionFilter] = useState<AuditDecisionFilter>("all");
   const [policyInstruction, setPolicyInstruction] = useState("allow tests but ask before dependency installs");
   const [policyProposal, setPolicyProposal] = useState(policyPreview);
   const [policyText, setPolicyText] = useState(policyPreview);
@@ -120,15 +124,19 @@ function App() {
       setNotificationPermission(Notification.permission);
     }
     refreshApprovals();
-    refreshAudit();
     refreshPolicy();
     refreshBundleDigest();
     const timer = window.setInterval(() => {
       refreshApprovals();
-      refreshAudit();
     }, 5000);
     return () => window.clearInterval(timer);
   }, [notificationPermission]);
+
+  useEffect(() => {
+    refreshAudit();
+    const timer = window.setInterval(refreshAudit, 5000);
+    return () => window.clearInterval(timer);
+  }, [auditActorFilter, auditActionFilter, auditDecisionFilter]);
 
   async function refreshApprovals() {
     try {
@@ -167,8 +175,21 @@ function App() {
   }
 
   async function refreshAudit() {
+    const params = new URLSearchParams({ limit: "20" });
+    const actor = auditActorFilter.trim();
+    const action = auditActionFilter.trim();
+    if (actor) {
+      params.set("actor", actor);
+    }
+    if (action) {
+      params.set("action", action);
+    }
+    if (auditDecisionFilter !== "all") {
+      params.set("decision", auditDecisionFilter);
+    }
+
     try {
-      const response = await fetch(`${daemonBase}/audit?limit=20`);
+      const response = await fetch(`${daemonBase}/audit?${params.toString()}`);
       if (!response.ok) {
         return;
       }
@@ -448,11 +469,37 @@ function App() {
           </Panel>
 
           <Panel title="Audit Log" icon={<History size={18} />}>
+            <div className="filter-row" aria-label="Audit filters">
+              <input
+                value={auditActorFilter}
+                onChange={(event) => setAuditActorFilter(event.target.value)}
+                placeholder="Actor"
+                aria-label="Filter audit actor"
+              />
+              <input
+                value={auditActionFilter}
+                onChange={(event) => setAuditActionFilter(event.target.value)}
+                placeholder="Action"
+                aria-label="Filter audit action"
+              />
+              <select
+                value={auditDecisionFilter}
+                onChange={(event) => setAuditDecisionFilter(event.target.value as AuditDecisionFilter)}
+                aria-label="Filter audit decision"
+              >
+                <option value="all">All decisions</option>
+                <option value="allow">Allow</option>
+                <option value="ask">Ask</option>
+                <option value="deny">Deny</option>
+              </select>
+              <button className="text-button" onClick={refreshAudit}><RefreshCw size={15} />Refresh</button>
+            </div>
             <table>
               <thead>
                 <tr>
                   <th>Time</th>
                   <th>Actor</th>
+                  <th>Action</th>
                   <th>Decision</th>
                   <th>Risk</th>
                   <th>Subject</th>
@@ -463,6 +510,7 @@ function App() {
                   <tr key={item.id}>
                     <td>{formatAuditTime(item.timestamp)}</td>
                     <td>{item.actor}</td>
+                    <td>{item.action}</td>
                     <td><span className={`decision ${item.decision}`}>{item.decision}</span></td>
                     <td>{item.risk}</td>
                     <td>{item.subject}</td>

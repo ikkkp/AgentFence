@@ -393,6 +393,26 @@ nav a:hover {
   cursor: pointer;
 }
 
+.filter-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(110px, 0.9fr) minmax(130px, 1fr) minmax(130px, 0.8fr) auto;
+  margin-bottom: 12px;
+}
+
+.filter-row input,
+.filter-row select {
+  background: #f8faf7;
+  border: 1px solid #d9e2d8;
+  border-radius: 8px;
+  color: #17211c;
+  min-height: 36px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
 table {
   border-collapse: collapse;
   table-layout: fixed;
@@ -551,7 +571,8 @@ th {
   }
 
   .metrics,
-  .grid {
+  .grid,
+  .filter-row {
     grid-template-columns: 1fr;
   }
 }

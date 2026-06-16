@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, MappedRows, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -111,6 +111,13 @@ pub struct AuditStore {
     conn: Connection,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditFilter {
+    pub actor: Option<String>,
+    pub decision: Option<String>,
+    pub action: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditExportFormat {
     Json,
@@ -164,6 +171,60 @@ mod tests {
         let row = csv_row(&["simple", "has,comma", "has\"quote"]);
         assert_eq!(row, "simple,\"has,comma\",\"has\"\"quote\"");
     }
+
+    #[test]
+    fn list_filtered_applies_actor_decision_and_action() {
+        let path = std::env::temp_dir().join(format!("agentfence-audit-{}.sqlite", Uuid::new_v4()));
+        let store = AuditStore::open(&path).expect("open audit store");
+
+        store
+            .append(&AuditEvent::new(
+                "codex",
+                "shell.exec",
+                "git status",
+                "allow",
+                "low",
+                "read-only",
+            ))
+            .expect("append codex shell event");
+        store
+            .append(&AuditEvent::new(
+                "claude-code",
+                "mcp.tool",
+                "github/create_pull_request",
+                "ask",
+                "medium",
+                "approval required",
+            ))
+            .expect("append claude mcp event");
+        store
+            .append(&AuditEvent::new(
+                "codex",
+                "mcp.tool",
+                "github/list_pull_requests",
+                "allow",
+                "low",
+                "allowed tool",
+            ))
+            .expect("append codex mcp event");
+
+        let events = store
+            .list_filtered(
+                10,
+                &AuditFilter {
+                    actor: Some("codex".to_string()),
+                    decision: Some("allow".to_string()),
+                    action: Some("mcp.tool".to_string()),
+                },
+            )
+            .expect("list filtered events");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].subject, "github/list_pull_requests");
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 impl AuditStore {
@@ -214,33 +275,31 @@ impl AuditStore {
              limit ?1",
         )?;
 
-        let rows = stmt.query_map([limit as i64], |row| {
-            let timestamp: String = row.get(1)?;
-            let metadata: String = row.get(10)?;
+        let rows = stmt.query_map([limit as i64], row_to_audit_event)?;
 
-            Ok(AuditEvent {
-                id: row.get(0)?,
-                timestamp: DateTime::parse_from_rfc3339(&timestamp)
-                    .map(|value| value.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                actor: row.get(2)?,
-                action: row.get(3)?,
-                subject: row.get(4)?,
-                decision: row.get(5)?,
-                risk: row.get(6)?,
-                reason: row.get(7)?,
-                matched_rule: row.get(8)?,
-                cwd: row.get(9)?,
-                metadata: serde_json::from_str(&metadata).unwrap_or(Value::Null),
-            })
-        })?;
+        collect_events(rows)
+    }
 
-        let mut events = Vec::new();
-        for row in rows {
-            events.push(row?);
-        }
+    pub fn list_filtered(&self, limit: usize, filter: &AuditFilter) -> Result<Vec<AuditEvent>> {
+        let mut stmt = self.conn.prepare(
+            "select id, timestamp, actor, action, subject, decision, risk, reason, matched_rule, cwd, metadata
+             from audit_events
+             where (?1 is null or actor = ?1)
+               and (?2 is null or decision = ?2)
+               and (?3 is null or action = ?3)
+             order by timestamp desc
+             limit ?4",
+        )?;
 
-        Ok(events)
+        let actor = non_empty(filter.actor.as_deref());
+        let decision = non_empty(filter.decision.as_deref());
+        let action = non_empty(filter.action.as_deref());
+        let rows = stmt.query_map(
+            params![actor, decision, action, limit as i64],
+            row_to_audit_event,
+        )?;
+
+        collect_events(rows)
     }
 
     pub fn export(&self, limit: usize, format: AuditExportFormat) -> Result<String> {
@@ -270,10 +329,55 @@ impl AuditStore {
             );
             create index if not exists idx_audit_events_timestamp on audit_events(timestamp);
             create index if not exists idx_audit_events_actor on audit_events(actor);
-            create index if not exists idx_audit_events_decision on audit_events(decision);",
+            create index if not exists idx_audit_events_decision on audit_events(decision);
+            create index if not exists idx_audit_events_action on audit_events(action);",
         )?;
         Ok(())
     }
+}
+
+fn row_to_audit_event(row: &Row<'_>) -> rusqlite::Result<AuditEvent> {
+    let timestamp: String = row.get(1)?;
+    let metadata: String = row.get(10)?;
+
+    Ok(AuditEvent {
+        id: row.get(0)?,
+        timestamp: DateTime::parse_from_rfc3339(&timestamp)
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        actor: row.get(2)?,
+        action: row.get(3)?,
+        subject: row.get(4)?,
+        decision: row.get(5)?,
+        risk: row.get(6)?,
+        reason: row.get(7)?,
+        matched_rule: row.get(8)?,
+        cwd: row.get(9)?,
+        metadata: serde_json::from_str(&metadata).unwrap_or(Value::Null),
+    })
+}
+
+fn collect_events<F>(rows: MappedRows<'_, F>) -> Result<Vec<AuditEvent>>
+where
+    F: FnMut(&Row<'_>) -> rusqlite::Result<AuditEvent>,
+{
+    let mut events = Vec::new();
+    for row in rows {
+        events.push(row?);
+    }
+
+    Ok(events)
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }
 
 fn events_to_csv(events: &[AuditEvent]) -> String {

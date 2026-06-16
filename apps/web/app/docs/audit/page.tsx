@@ -12,7 +12,15 @@ export default function AuditPage() {
       <pre>{`agentfence audit export --format json --output audit.json
 agentfence audit export --format csv --output audit.csv`}</pre>
       <h2>Daemon endpoint</h2>
-      <pre>{`curl "http://127.0.0.1:37421/audit/export?format=csv&limit=1000"`}</pre>
+      <p>
+        The daemon can return recent rows for the desktop app or export them for compliance workflows.
+      </p>
+      <pre>{`curl "http://127.0.0.1:37421/audit?limit=50"
+curl "http://127.0.0.1:37421/audit?limit=50&actor=codex&decision=deny&action=shell.exec"
+curl "http://127.0.0.1:37421/audit/export?format=csv&limit=1000"`}</pre>
+      <p>
+        Query filters are exact matches for actor, decision, and action.
+      </p>
     </main>
   );
 }
