@@ -210,9 +210,13 @@ agentfence policy review-preset export release-hardening --output release-harden
 agentfence policy review-preset verify release-hardening.review.json
 agentfence policy bundle keygen --output bundle-key.json
 agentfence policy review-preset sign release-hardening.review.json --key bundle-key.json
+agentfence policy review-preset trust add --name platform --key <public-key>
+agentfence policy review-preset trust list
 agentfence policy review-preset import release-hardening.review.json --yes
 agentfence policy review-preset verify release-hardening.review.json --require-signature --trusted-key <public-key>
 agentfence policy review-preset import release-hardening.review.json --yes --require-signature --trusted-key <public-key>
+agentfence policy review-preset verify release-hardening.review.json --require-signature --trust-store .agentfence/trusted-review-keys.json
+agentfence policy review-preset import release-hardening.review.json --yes --require-signature --trust-store .agentfence/trusted-review-keys.json
 ```
 
 Included presets:
@@ -221,7 +225,7 @@ Included presets:
 - `release-hardening`: production deploy denial, strict unknown-network handling, and gated GitHub writes.
 - `readonly-mcp`: read-oriented MCP defaults with strict unknown-network handling.
 
-Exported review presets are JSON artifacts containing metadata, a digest, and a standard policy patch proposal. Teams can review them in version control before importing them into a project policy. Use `sign`, `--require-signature`, and one or more `--trusted-key` values when a team wants Ed25519 verification against accepted public keys before import.
+Exported review presets are JSON artifacts containing metadata, a digest, and a standard policy patch proposal. Teams can review them in version control before importing them into a project policy. Use `sign`, `--require-signature`, and one or more `--trusted-key` values when a team wants Ed25519 verification against accepted public keys before import. Use `review-preset trust add` to maintain a local `.agentfence/trusted-review-keys.json` trust store and pass it with `--trust-store` during verification or import.
 
 ## Audit-Driven Suggestions
 

@@ -363,6 +363,8 @@ enum PolicyReviewPresetCommands {
         require_signature: bool,
         #[arg(long = "trusted-key")]
         trusted_keys: Vec<String>,
+        #[arg(long)]
+        trust_store: Option<PathBuf>,
     },
     Sign {
         input: PathBuf,
@@ -377,6 +379,28 @@ enum PolicyReviewPresetCommands {
         require_signature: bool,
         #[arg(long = "trusted-key")]
         trusted_keys: Vec<String>,
+        #[arg(long)]
+        trust_store: Option<PathBuf>,
+    },
+    Trust {
+        #[command(subcommand)]
+        command: PolicyReviewPresetTrustCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyReviewPresetTrustCommands {
+    List {
+        #[arg(long, default_value = ".agentfence/trusted-review-keys.json")]
+        path: PathBuf,
+    },
+    Add {
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, default_value = ".agentfence/trusted-review-keys.json")]
+        path: PathBuf,
     },
 }
 
@@ -1782,11 +1806,13 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
             yes,
             require_signature,
             trusted_keys,
+            trust_store,
         } => {
             let raw = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read review preset {}", input.display()))?;
             let bundle: serde_json::Value = serde_json::from_str(&raw)
                 .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            let trusted_keys = review_preset_trusted_keys(&trusted_keys, trust_store.as_deref())?;
             let verification =
                 verify_review_preset_bundle(&bundle, require_signature, &trusted_keys)?;
             if !verification
@@ -1843,11 +1869,13 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
             input,
             require_signature,
             trusted_keys,
+            trust_store,
         } => {
             let raw = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read review preset {}", input.display()))?;
             let bundle: serde_json::Value = serde_json::from_str(&raw)
                 .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            let trusted_keys = review_preset_trusted_keys(&trusted_keys, trust_store.as_deref())?;
             let verification =
                 verify_review_preset_bundle(&bundle, require_signature, &trusted_keys)?;
             println!("{}", serde_json::to_string_pretty(&verification)?);
@@ -1860,6 +1888,9 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
             } else {
                 Ok(ExitCode::from(1))
             }
+        }
+        PolicyReviewPresetCommands::Trust { command } => {
+            policy_review_preset_trust_command(command)
         }
     }
 }
@@ -1951,6 +1982,8 @@ fn policy_review_preset_bundle(preset: PolicyReviewPreset) -> serde_json::Value 
 }
 
 const REVIEW_PRESET_SIGNATURE_DOMAIN: &str = "agentfence-policy-review-preset-v1";
+const REVIEW_PRESET_TRUST_STORE_KIND: &str = "agentfence.reviewPresetTrustStore";
+const REVIEW_PRESET_TRUST_STORE_VERSION: &str = "0.1";
 
 fn attach_review_preset_digest(bundle: &mut serde_json::Value) -> Result<String> {
     let digest = review_preset_digest(bundle)?;
@@ -2065,6 +2098,184 @@ fn proposal_from_review_preset_bundle(bundle: &serde_json::Value) -> Result<Poli
             .context("review preset is missing proposal")?,
     )
     .context("failed to parse review preset proposal")
+}
+
+fn policy_review_preset_trust_command(
+    command: PolicyReviewPresetTrustCommands,
+) -> Result<ExitCode> {
+    match command {
+        PolicyReviewPresetTrustCommands::List { path } => {
+            let store = load_review_preset_trust_store(&path)?;
+            println!("{}", serde_json::to_string_pretty(&store)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetTrustCommands::Add { key, name, path } => {
+            let mut store = load_review_preset_trust_store(&path)?;
+            let added = add_review_preset_trusted_key(&mut store, &key, name.as_deref())?;
+            if added {
+                save_review_preset_trust_store(&path, &store)?;
+            }
+            let key_count = review_preset_trust_store_keys(&store)?.len();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "added": added,
+                    "keyCount": key_count
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn review_preset_trusted_keys(
+    cli_keys: &[String],
+    trust_store: Option<&Path>,
+) -> Result<Vec<String>> {
+    let mut trusted_keys = Vec::new();
+    for key in cli_keys {
+        push_unique_trusted_key(&mut trusted_keys, key);
+    }
+
+    if let Some(path) = trust_store {
+        let store = load_review_preset_trust_store(path)?;
+        for key in review_preset_trust_store_keys(&store)? {
+            push_unique_trusted_key(&mut trusted_keys, &key);
+        }
+        if trusted_keys.is_empty() {
+            bail!(
+                "review preset trust store {} did not contain any trusted keys",
+                path.display()
+            );
+        }
+    }
+
+    Ok(trusted_keys)
+}
+
+fn load_review_preset_trust_store(path: &Path) -> Result<serde_json::Value> {
+    if !path.exists() {
+        return Ok(empty_review_preset_trust_store());
+    }
+    let raw = fs::read_to_string(path).with_context(|| {
+        format!(
+            "failed to read review preset trust store {}",
+            path.display()
+        )
+    })?;
+    let store: serde_json::Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "failed to parse review preset trust store {}",
+            path.display()
+        )
+    })?;
+    review_preset_trust_store_keys(&store)?;
+    Ok(store)
+}
+
+fn save_review_preset_trust_store(path: &Path, store: &serde_json::Value) -> Result<()> {
+    review_preset_trust_store_keys(store)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create trust store directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(path, serde_json::to_string_pretty(store)?).with_context(|| {
+        format!(
+            "failed to write review preset trust store {}",
+            path.display()
+        )
+    })
+}
+
+fn empty_review_preset_trust_store() -> serde_json::Value {
+    serde_json::json!({
+        "kind": REVIEW_PRESET_TRUST_STORE_KIND,
+        "version": REVIEW_PRESET_TRUST_STORE_VERSION,
+        "keys": []
+    })
+}
+
+fn review_preset_trust_store_keys(store: &serde_json::Value) -> Result<Vec<String>> {
+    let kind = store
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .context("review preset trust store is missing kind")?;
+    if kind != REVIEW_PRESET_TRUST_STORE_KIND {
+        bail!("unsupported review preset trust store kind {kind}");
+    }
+    let version = store
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .context("review preset trust store is missing version")?;
+    if version != REVIEW_PRESET_TRUST_STORE_VERSION {
+        bail!("unsupported review preset trust store version {version}");
+    }
+
+    let entries = store
+        .get("keys")
+        .and_then(serde_json::Value::as_array)
+        .context("review preset trust store keys must be an array")?;
+    let mut keys = Vec::new();
+    for entry in entries {
+        let key = entry
+            .get("publicKey")
+            .and_then(serde_json::Value::as_str)
+            .context("review preset trust store key is missing publicKey")?;
+        push_unique_trusted_key(&mut keys, key);
+    }
+    Ok(keys)
+}
+
+fn add_review_preset_trusted_key(
+    store: &mut serde_json::Value,
+    key: &str,
+    name: Option<&str>,
+) -> Result<bool> {
+    review_preset_trust_store_keys(store)?;
+    let key = key.trim();
+    if key.is_empty() {
+        bail!("trusted review preset key cannot be empty");
+    }
+    let entries = store
+        .get_mut("keys")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("review preset trust store keys must be an array")?;
+    if entries
+        .iter()
+        .any(|entry| entry.get("publicKey").and_then(serde_json::Value::as_str) == Some(key))
+    {
+        return Ok(false);
+    }
+
+    let mut entry = serde_json::Map::new();
+    if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+        entry.insert(
+            "name".to_string(),
+            serde_json::Value::String(name.to_string()),
+        );
+    }
+    entry.insert(
+        "publicKey".to_string(),
+        serde_json::Value::String(key.to_string()),
+    );
+    entries.push(serde_json::Value::Object(entry));
+    Ok(true)
+}
+
+fn push_unique_trusted_key(keys: &mut Vec<String>, key: &str) {
+    let key = key.trim();
+    if key.is_empty() || keys.iter().any(|existing| existing == key) {
+        return;
+    }
+    keys.push(key.to_string());
 }
 
 fn configure_github_mcp(policy: &mut Policy, default_decision: Decision) {
@@ -4547,5 +4758,92 @@ mod tests {
             verify_review_preset_bundle(&bundle, false, &[]).expect("verify tampered");
         assert_eq!(verification["valid"], false);
         assert_eq!(verification["digestValid"], false);
+    }
+
+    #[test]
+    fn review_preset_trust_store_collects_unique_keys() {
+        let store = serde_json::json!({
+            "kind": REVIEW_PRESET_TRUST_STORE_KIND,
+            "version": REVIEW_PRESET_TRUST_STORE_VERSION,
+            "keys": [
+                { "name": "team", "publicKey": "key-a" },
+                { "name": "duplicate", "publicKey": "key-a" },
+                { "publicKey": "key-b" }
+            ]
+        });
+
+        let keys = review_preset_trust_store_keys(&store).expect("keys");
+
+        assert_eq!(keys, vec!["key-a".to_string(), "key-b".to_string()]);
+    }
+
+    #[test]
+    fn review_preset_trust_store_adds_key_once() {
+        let mut store = empty_review_preset_trust_store();
+
+        assert!(
+            add_review_preset_trusted_key(&mut store, " key-a ", Some("platform"))
+                .expect("add key")
+        );
+        assert!(
+            !add_review_preset_trusted_key(&mut store, "key-a", Some("platform"))
+                .expect("duplicate")
+        );
+
+        let keys = review_preset_trust_store_keys(&store).expect("keys");
+        assert_eq!(keys, vec!["key-a".to_string()]);
+        assert_eq!(store["keys"][0]["name"], "platform");
+    }
+
+    #[test]
+    fn review_preset_verification_uses_trust_store_keys() {
+        let mut bundle = policy_review_preset_bundle(PolicyReviewPreset::ReleaseHardening);
+        let keypair = generate_policy_bundle_keypair();
+        sign_review_preset_bundle(&mut bundle, &keypair).expect("sign");
+        let directory = test_temp_dir("review-preset-trust-store");
+        let trust_store = directory.join("trusted-review-keys.json");
+        let mut store = empty_review_preset_trust_store();
+        add_review_preset_trusted_key(&mut store, &keypair.public_key, Some("local"))
+            .expect("add key");
+        save_review_preset_trust_store(&trust_store, &store).expect("save store");
+
+        let trusted_keys = review_preset_trusted_keys(&[], Some(&trust_store)).expect("trust keys");
+        let verification =
+            verify_review_preset_bundle(&bundle, true, &trusted_keys).expect("verify");
+
+        assert_eq!(trusted_keys, vec![keypair.public_key]);
+        assert_eq!(verification["valid"], true);
+        assert_eq!(verification["signatureTrusted"], true);
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn empty_review_preset_trust_store_rejects_verification_key_resolution() {
+        let directory = test_temp_dir("empty-review-preset-trust-store");
+        let trust_store = directory.join("trusted-review-keys.json");
+        save_review_preset_trust_store(&trust_store, &empty_review_preset_trust_store())
+            .expect("save store");
+
+        let error = review_preset_trusted_keys(&[], Some(&trust_store))
+            .expect_err("empty trust store should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("did not contain any trusted keys")
+        );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    fn test_temp_dir(prefix: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&directory).expect("temp dir");
+        directory
     }
 }
