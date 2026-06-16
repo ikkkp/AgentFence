@@ -13,12 +13,13 @@ use std::time::{Duration, Instant};
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
 use agentfence_policy::{
     ActorPolicy, Decision, DecisionResult, FilesystemRequest, JsonPatchOperation, McpServerPolicy,
-    NetworkRequest, Policy, PolicyBundle, PolicyBundleKeyPair, PolicyObservation,
-    PolicyPatchProposal, PolicyPreset, RateLimitPolicy, ShellMatch, ShellRequest, ShellRule,
-    SkillRequest, apply_policy_patch, create_policy_bundle, discover_policy, evaluate_filesystem,
-    evaluate_network, evaluate_shell, evaluate_skill, generate_policy_bundle_keypair, load_policy,
-    policy_schema_json, preset_policy, propose_policy_patch, save_policy, sign_policy_bundle,
-    suggest_policy_patches, verify_policy_bundle,
+    NetworkRequest, Policy, PolicyBundle, PolicyBundleKeyPair, PolicyBundleSignature,
+    PolicyObservation, PolicyPatchProposal, PolicyPreset, RateLimitPolicy, ShellMatch,
+    ShellRequest, ShellRule, SkillRequest, apply_policy_patch, create_policy_bundle,
+    discover_policy, evaluate_filesystem, evaluate_network, evaluate_shell, evaluate_skill,
+    generate_policy_bundle_keypair, json_digest, load_policy, policy_schema_json, preset_policy,
+    propose_policy_patch, save_policy, sign_artifact_digest, sign_policy_bundle,
+    suggest_policy_patches, verify_artifact_digest_signature, verify_policy_bundle,
 };
 use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result, bail};
@@ -358,6 +359,20 @@ enum PolicyReviewPresetCommands {
         path: PathBuf,
         #[arg(long)]
         yes: bool,
+        #[arg(long)]
+        require_signature: bool,
+    },
+    Sign {
+        input: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Verify {
+        input: PathBuf,
+        #[arg(long)]
+        require_signature: bool,
     },
 }
 
@@ -1750,17 +1765,34 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
                     output.display()
                 );
             }
-            let bundle = policy_review_preset_bundle(preset);
+            let mut bundle = policy_review_preset_bundle(preset);
+            attach_review_preset_digest(&mut bundle)?;
             fs::write(&output, serde_json::to_string_pretty(&bundle)?)
                 .with_context(|| format!("failed to write review preset {}", output.display()))?;
             println!("exported review preset {}", output.display());
             Ok(ExitCode::SUCCESS)
         }
-        PolicyReviewPresetCommands::Import { input, path, yes } => {
+        PolicyReviewPresetCommands::Import {
+            input,
+            path,
+            yes,
+            require_signature,
+        } => {
             let raw = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read review preset {}", input.display()))?;
             let bundle: serde_json::Value = serde_json::from_str(&raw)
                 .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            let verification = verify_review_preset_bundle(&bundle, require_signature)?;
+            if !verification
+                .get("valid")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                bail!(
+                    "review preset verification failed: {}",
+                    serde_json::to_string_pretty(&verification)?
+                );
+            }
             let proposal = proposal_from_review_preset_bundle(&bundle)?;
             println!("{}", serde_json::to_string_pretty(&proposal)?);
             if !yes
@@ -1786,6 +1818,40 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
                 .unwrap_or("external");
             println!("imported {name} to {}", path.display());
             Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetCommands::Sign { input, key, output } => {
+            let raw = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read review preset {}", input.display()))?;
+            let mut bundle: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            proposal_from_review_preset_bundle(&bundle)?;
+            let keypair = load_policy_bundle_keypair(&key)?;
+            sign_review_preset_bundle(&mut bundle, &keypair)?;
+            let output = output.unwrap_or(input);
+            fs::write(&output, serde_json::to_string_pretty(&bundle)?)
+                .with_context(|| format!("failed to write review preset {}", output.display()))?;
+            println!("signed review preset {}", output.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetCommands::Verify {
+            input,
+            require_signature,
+        } => {
+            let raw = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read review preset {}", input.display()))?;
+            let bundle: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse review preset {}", input.display()))?;
+            let verification = verify_review_preset_bundle(&bundle, require_signature)?;
+            println!("{}", serde_json::to_string_pretty(&verification)?);
+            if verification
+                .get("valid")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::from(1))
+            }
         }
     }
 }
@@ -1874,6 +1940,90 @@ fn policy_review_preset_bundle(preset: PolicyReviewPreset) -> serde_json::Value 
         "packs": packs,
         "proposal": policy_review_preset_proposal(preset)
     })
+}
+
+const REVIEW_PRESET_SIGNATURE_DOMAIN: &str = "agentfence-policy-review-preset-v1";
+
+fn attach_review_preset_digest(bundle: &mut serde_json::Value) -> Result<String> {
+    let digest = review_preset_digest(bundle)?;
+    let object = bundle
+        .as_object_mut()
+        .context("review preset bundle is not an object")?;
+    object.insert(
+        "digest".to_string(),
+        serde_json::Value::String(digest.clone()),
+    );
+    Ok(digest)
+}
+
+fn sign_review_preset_bundle(
+    bundle: &mut serde_json::Value,
+    keypair: &PolicyBundleKeyPair,
+) -> Result<()> {
+    let digest = attach_review_preset_digest(bundle)?;
+    let signature = sign_artifact_digest(&digest, keypair, REVIEW_PRESET_SIGNATURE_DOMAIN)?;
+    let object = bundle
+        .as_object_mut()
+        .context("review preset bundle is not an object")?;
+    object.insert(
+        "signature".to_string(),
+        serde_json::to_value(signature).context("failed to encode review preset signature")?,
+    );
+    Ok(())
+}
+
+fn verify_review_preset_bundle(
+    bundle: &serde_json::Value,
+    require_signature: bool,
+) -> Result<serde_json::Value> {
+    proposal_from_review_preset_bundle(bundle)?;
+    let expected_digest = bundle
+        .get("digest")
+        .and_then(serde_json::Value::as_str)
+        .context("review preset is missing digest")?;
+    let actual_digest = review_preset_digest(bundle)?;
+    let digest_valid = expected_digest == actual_digest;
+    let signature = bundle.get("signature");
+    if require_signature && signature.is_none() {
+        bail!("review preset signature is required");
+    }
+
+    let (signature_valid, signature_error) = match signature {
+        Some(signature) => {
+            let signature: PolicyBundleSignature = serde_json::from_value(signature.clone())
+                .context("failed to parse review preset signature")?;
+            match verify_artifact_digest_signature(
+                expected_digest,
+                &signature,
+                REVIEW_PRESET_SIGNATURE_DOMAIN,
+            ) {
+                Ok(valid) => (Some(valid), None),
+                Err(error) => (Some(false), Some(error.to_string())),
+            }
+        }
+        None => (None, None),
+    };
+    let valid = digest_valid && signature_valid.unwrap_or(true);
+
+    Ok(serde_json::json!({
+        "valid": valid,
+        "digestValid": digest_valid,
+        "expectedDigest": expected_digest,
+        "actualDigest": actual_digest,
+        "signaturePresent": signature.is_some(),
+        "signatureValid": signature_valid,
+        "signatureError": signature_error
+    }))
+}
+
+fn review_preset_digest(bundle: &serde_json::Value) -> Result<String> {
+    let mut signing_value = bundle.clone();
+    let object = signing_value
+        .as_object_mut()
+        .context("review preset bundle is not an object")?;
+    object.remove("digest");
+    object.remove("signature");
+    json_digest(&signing_value)
 }
 
 fn proposal_from_review_preset_bundle(bundle: &serde_json::Value) -> Result<PolicyPatchProposal> {
@@ -4348,5 +4498,27 @@ mod tests {
         });
 
         assert!(proposal_from_review_preset_bundle(&bundle).is_err());
+    }
+
+    #[test]
+    fn review_preset_bundle_verifies_digest_and_signature() {
+        let mut bundle = policy_review_preset_bundle(PolicyReviewPreset::ReleaseHardening);
+        attach_review_preset_digest(&mut bundle).expect("digest");
+
+        let verification = verify_review_preset_bundle(&bundle, false).expect("verify");
+        assert_eq!(verification["valid"], true);
+        assert_eq!(verification["signaturePresent"], false);
+
+        let keypair = generate_policy_bundle_keypair();
+        sign_review_preset_bundle(&mut bundle, &keypair).expect("sign");
+        let verification = verify_review_preset_bundle(&bundle, true).expect("verify signed");
+        assert_eq!(verification["valid"], true);
+        assert_eq!(verification["signaturePresent"], true);
+        assert_eq!(verification["signatureValid"], true);
+
+        bundle["title"] = serde_json::json!("tampered");
+        let verification = verify_review_preset_bundle(&bundle, false).expect("verify tampered");
+        assert_eq!(verification["valid"], false);
+        assert_eq!(verification["digestValid"], false);
     }
 }

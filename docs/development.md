@@ -23,6 +23,7 @@ cargo run --bin agentfence -- policy apply --yes "deny production deploy"
 cargo run --bin agentfence -- policy library list
 cargo run --bin agentfence -- policy review-preset list
 cargo run --bin agentfence -- policy review-preset export release-hardening --output release-hardening.review.json --force
+cargo run --bin agentfence -- policy review-preset verify release-hardening.review.json
 cargo run --bin agentfence -- policy template list
 cargo run --bin agentfence -- policy bundle keygen --output bundle-key.json
 cargo run --bin agentfence -- policy bundle export --output team.bundle.json

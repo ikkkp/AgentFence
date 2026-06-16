@@ -1006,6 +1006,19 @@ pub fn generate_policy_bundle_keypair() -> PolicyBundleKeyPair {
 }
 
 pub fn sign_policy_bundle(bundle: &mut PolicyBundle, keypair: &PolicyBundleKeyPair) -> Result<()> {
+    bundle.signature = Some(sign_artifact_digest(
+        &bundle.digest,
+        keypair,
+        "agentfence-policy-bundle-v1",
+    )?);
+    Ok(())
+}
+
+pub fn sign_artifact_digest(
+    digest: &str,
+    keypair: &PolicyBundleKeyPair,
+    domain: &str,
+) -> Result<PolicyBundleSignature> {
     if keypair.algorithm != "ed25519" {
         bail!(
             "unsupported policy bundle key algorithm {}",
@@ -1014,18 +1027,25 @@ pub fn sign_policy_bundle(bundle: &mut PolicyBundle, keypair: &PolicyBundleKeyPa
     }
     let secret = decode_base64_array::<32>(&keypair.secret_key)?;
     let signing_key = SigningKey::from_bytes(&secret);
-    let signature = signing_key.sign(signing_payload(&bundle.digest).as_bytes());
-    bundle.signature = Some(PolicyBundleSignature {
+    let signature = signing_key.sign(signing_payload(domain, digest).as_bytes());
+    Ok(PolicyBundleSignature {
         algorithm: "ed25519".to_string(),
         public_key: BASE64.encode(signing_key.verifying_key().to_bytes()),
         signature: BASE64.encode(signature.to_bytes()),
-    });
-    Ok(())
+    })
 }
 
 pub fn verify_policy_bundle_signature(
     digest: &str,
     signature: &PolicyBundleSignature,
+) -> Result<bool> {
+    verify_artifact_digest_signature(digest, signature, "agentfence-policy-bundle-v1")
+}
+
+pub fn verify_artifact_digest_signature(
+    digest: &str,
+    signature: &PolicyBundleSignature,
+    domain: &str,
 ) -> Result<bool> {
     if signature.algorithm != "ed25519" {
         bail!(
@@ -1041,7 +1061,7 @@ pub fn verify_policy_bundle_signature(
         VerifyingKey::from_bytes(&public_key).context("invalid bundle public key")?;
     let signature = Signature::from_slice(&signature_bytes).context("invalid bundle signature")?;
     Ok(verifying_key
-        .verify(signing_payload(digest).as_bytes(), &signature)
+        .verify(signing_payload(domain, digest).as_bytes(), &signature)
         .is_ok())
 }
 
@@ -1051,8 +1071,14 @@ pub fn policy_digest(policy: &Policy) -> Result<String> {
     Ok(format!("sha256:{}", hex_lower(&digest)))
 }
 
-fn signing_payload(digest: &str) -> String {
-    format!("agentfence-policy-bundle-v1\0{digest}")
+pub fn json_digest(value: &serde_json::Value) -> Result<String> {
+    let raw = serde_json::to_vec(value).context("failed to serialize JSON artifact for digest")?;
+    let digest = Sha256::digest(raw);
+    Ok(format!("sha256:{}", hex_lower(&digest)))
+}
+
+fn signing_payload(domain: &str, digest: &str) -> String {
+    format!("{domain}\0{digest}")
 }
 
 fn decode_base64_array<const N: usize>(value: &str) -> Result<[u8; N]> {
