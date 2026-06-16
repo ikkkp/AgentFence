@@ -100,10 +100,10 @@ Wrapper profile: `examples/integrations/generic-mcp-proxy.json`
 | Codex | Supported | Supported when configured as an MCP client | Supported | Start Codex through `agentfence run` for shell enforcement. |
 | Claude Code | Supported | Supported when configured as an MCP client | Supported | Use actor `claude-code` for policy and audit separation. |
 | Cursor-style agents | Harness dependent | Supported for MCP servers | Supported | Wrap the underlying command or SDK runner. |
-| Generic MCP clients | Not applicable | Supported | Supported with `--ask-mode queue` | Stdio and non-streaming HTTP JSON-RPC are supported; SSE is future work. |
+| Generic MCP clients | Not applicable | Supported | Supported with `--ask-mode queue` | Stdio, HTTP JSON-RPC, and GET/SSE stream passthrough are supported. |
 
 ## Known Limits
 
 - Wrapper-only shell control cannot intercept commands an agent launches outside AgentFence.
 - OS-level filesystem and network enforcement are not yet implemented.
-- MCP HTTP proxy coverage currently focuses on non-streaming POST JSON-RPC, not SSE streams.
+- MCP HTTP stream passthrough is supported, but stream-aware list filtering is limited to complete JSON responses.

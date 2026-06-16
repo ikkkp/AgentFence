@@ -11,14 +11,14 @@ export default function SecurityPage() {
       <ul>
         <li>Shell commands launched through `agentfence run` or entered in `agentfence shell` are checked before execution.</li>
         <li>URL-like and common Git/SSH remotes in guarded commands are checked against network policy.</li>
-        <li>MCP stdio and non-streaming HTTP JSON-RPC calls can be enforced through AgentFence proxies.</li>
+        <li>MCP stdio, HTTP JSON-RPC, and GET/SSE stream requests can be routed through AgentFence proxies.</li>
         <li>Audit logs are stored locally in SQLite.</li>
       </ul>
       <h2>Known limits</h2>
       <ul>
         <li>Shell control cannot intercept commands an agent launches outside AgentFence or a future full PTY integration.</li>
         <li>Full network enforcement still requires a proxy or OS-level integration in a later milestone.</li>
-        <li>MCP SSE and streaming HTTP responses remain future transport work.</li>
+        <li>Stream-aware filtering is limited; list filtering applies to complete JSON responses.</li>
       </ul>
     </main>
   );

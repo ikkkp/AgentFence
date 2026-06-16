@@ -23,8 +23,8 @@ export default function McpPage() {
   --listen 127.0.0.1:37422 \\
   --upstream http://127.0.0.1:3000/mcp`}</pre>
       <p>
-        The HTTP proxy applies the same checks to non-streaming HTTP POST JSON-RPC bodies. SSE and
-        streaming responses remain future work.
+        The HTTP proxy applies the same checks to HTTP POST JSON-RPC bodies and passes through GET/SSE
+        or chunked streaming responses after request-level checks.
       </p>
       <h2>Rate limits</h2>
       <p>

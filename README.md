@@ -133,13 +133,13 @@ agentfence mcp http-proxy --server github --upstream http://127.0.0.1:3000/mcp
 
 ## Security Model
 
-AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, provides a line-oriented guarded shell through `agentfence shell`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC calls through `agentfence mcp http-proxy`. Full PTY interception, MCP SSE/streaming transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
+AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, provides a line-oriented guarded shell through `agentfence shell`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC and GET/SSE streams through `agentfence mcp http-proxy`. Full PTY interception, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
 
 Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 
 Natural-language policy management and audit-driven suggestions generate JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
 
-The MCP stdio and HTTP JSON-RPC proxies enforce `tools/call`, `resources/read`, and `prompts/get`, and filter denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
+The MCP stdio and HTTP proxies enforce `tools/call`, `resources/read`, and `prompts/get`, and filter denied entries from complete JSON `tools/list`, `resources/list`, and `prompts/list` responses. The HTTP proxy also passes through GET/SSE and streaming upstream responses after request-level checks. `ask` decisions default to deny, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
 
 MCP server policies can include `rateLimit` windows. Calls over the limit receive an MCP error response and are not forwarded upstream.
 

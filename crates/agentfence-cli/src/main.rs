@@ -470,7 +470,7 @@ struct McpProxyArgs {
     command: Vec<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 struct McpHttpProxyArgs {
     #[arg(long)]
     server: String,
@@ -1773,6 +1773,8 @@ struct HttpUpstream {
 #[derive(Debug)]
 struct SimpleHttpRequest {
     method: String,
+    path: String,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -1790,16 +1792,22 @@ fn mcp_http_proxy(args: McpHttpProxyArgs) -> Result<ExitCode> {
     let upstream = parse_http_upstream(&args.upstream)?;
     let listener = TcpListener::bind(args.listen)
         .with_context(|| format!("failed to bind MCP HTTP proxy {}", args.listen))?;
-    let mut rate_limiter = agentfence_mcp::McpRateLimiter::for_server(&policy, &args.server);
-    let audit_store = if policy.audit.enabled {
-        Some(AuditStore::open(
+    let rate_limiter = Arc::new(Mutex::new(agentfence_mcp::McpRateLimiter::for_server(
+        &policy,
+        &args.server,
+    )));
+    let audit_path = if policy.audit.enabled {
+        Some(
             args.audit
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(&policy.audit.store)),
-        )?)
+        )
     } else {
         None
     };
+    let policy = Arc::new(policy);
+    let upstream = Arc::new(upstream);
+    let args = Arc::new(args);
 
     eprintln!(
         "agentfence mcp http-proxy: listening on http://{} and forwarding to {}",
@@ -1809,26 +1817,31 @@ fn mcp_http_proxy(args: McpHttpProxyArgs) -> Result<ExitCode> {
     for connection in listener.incoming() {
         match connection {
             Ok(mut stream) => {
-                if let Err(error) = handle_mcp_http_connection(
-                    &mut stream,
-                    &args,
-                    &policy,
-                    &upstream,
-                    &mut rate_limiter,
-                    audit_store.as_ref(),
-                ) {
-                    eprintln!("agentfence mcp http-proxy: {error:?}");
-                    let body = serde_json::json!({
-                        "error": "AgentFence MCP HTTP proxy failed",
-                        "detail": error.to_string()
-                    });
-                    let _ = write_http_response(
+                let args = Arc::clone(&args);
+                let policy = Arc::clone(&policy);
+                let upstream = Arc::clone(&upstream);
+                let rate_limiter = Arc::clone(&rate_limiter);
+                let audit_path = audit_path.clone();
+                thread::spawn(move || {
+                    if let Err(error) = handle_mcp_http_connection(
                         &mut stream,
-                        500,
-                        "application/json",
-                        serde_json::to_string(&body)?.as_bytes(),
-                    );
-                }
+                        &args,
+                        &policy,
+                        &upstream,
+                        &rate_limiter,
+                        audit_path.as_deref(),
+                    ) {
+                        eprintln!("agentfence mcp http-proxy: {error:?}");
+                        let body = serde_json::json!({
+                            "error": "AgentFence MCP HTTP proxy failed",
+                            "detail": error.to_string()
+                        });
+                        if let Ok(body) = serde_json::to_vec(&body) {
+                            let _ =
+                                write_http_response(&mut stream, 500, "application/json", &body);
+                        }
+                    }
+                });
             }
             Err(error) => eprintln!("agentfence mcp http-proxy: connection failed: {error}"),
         }
@@ -1842,13 +1855,17 @@ fn handle_mcp_http_connection(
     args: &McpHttpProxyArgs,
     policy: &agentfence_policy::Policy,
     upstream: &HttpUpstream,
-    rate_limiter: &mut agentfence_mcp::McpRateLimiter,
-    audit_store: Option<&AuditStore>,
+    rate_limiter: &Arc<Mutex<agentfence_mcp::McpRateLimiter>>,
+    audit_path: Option<&Path>,
 ) -> Result<()> {
     let request = read_http_request(stream)?;
+    if request.method == "GET" {
+        return forward_http_stream(upstream, &request, stream);
+    }
+
     if request.method != "POST" {
         let body = serde_json::json!({
-            "error": "AgentFence MCP HTTP proxy only accepts POST requests"
+            "error": "AgentFence MCP HTTP proxy accepts POST JSON-RPC requests and GET streams"
         });
         return write_http_response(
             stream,
@@ -1902,7 +1919,10 @@ fn handle_mcp_http_connection(
         };
         let mut denial_decision = decision.decision.clone();
         let allowed = if allowed {
-            if let Some(rate_limit_decision) = rate_limiter.check(&decision.request) {
+            let mut limiter = rate_limiter
+                .lock()
+                .map_err(|_| anyhow::anyhow!("MCP HTTP rate limiter lock poisoned"))?;
+            if let Some(rate_limit_decision) = limiter.check(&decision.request) {
                 denial_decision = rate_limit_decision;
                 false
             } else {
@@ -1911,8 +1931,8 @@ fn handle_mcp_http_connection(
         } else {
             false
         };
-        append_mcp_audit(
-            audit_store,
+        append_mcp_audit_for_path(
+            audit_path,
             &decision.request,
             if allowed {
                 &decision.decision
@@ -1943,28 +1963,38 @@ fn handle_mcp_http_connection(
         }
     }
 
-    let mut response = forward_http_json(upstream, &request.body)?;
-    if let Some(method) = list_method {
-        if let Ok(response_json) = serde_json::from_slice::<serde_json::Value>(&response.body) {
-            let filtered =
-                agentfence_mcp::filter_list_response(policy, &args.server, &method, &response_json);
-            if filtered.removed > 0 {
-                eprintln!(
-                    "agentfence mcp http-proxy: filtered {} item(s) from {}",
-                    filtered.removed, method
-                );
+    match forward_http_request(upstream, &request, stream)? {
+        ForwardedHttpResponse::Complete(mut response) => {
+            if let Some(method) = list_method {
+                if let Ok(response_json) =
+                    serde_json::from_slice::<serde_json::Value>(&response.body)
+                {
+                    let filtered = agentfence_mcp::filter_list_response(
+                        policy,
+                        &args.server,
+                        &method,
+                        &response_json,
+                    );
+                    if filtered.removed > 0 {
+                        eprintln!(
+                            "agentfence mcp http-proxy: filtered {} item(s) from {}",
+                            filtered.removed, method
+                        );
+                    }
+                    response.body = serde_json::to_vec(&filtered.response)?;
+                    response.content_type = "application/json".to_string();
+                }
             }
-            response.body = serde_json::to_vec(&filtered.response)?;
-            response.content_type = "application/json".to_string();
-        }
-    }
 
-    write_http_response(
-        stream,
-        response.status,
-        &response.content_type,
-        &response.body,
-    )
+            write_http_response(
+                stream,
+                response.status,
+                &response.content_type,
+                &response.body,
+            )
+        }
+        ForwardedHttpResponse::Streamed => Ok(()),
+    }
 }
 
 fn parse_http_upstream(value: &str) -> Result<HttpUpstream> {
@@ -2002,13 +2032,15 @@ fn read_http_request(stream: &TcpStream) -> Result<SimpleHttpRequest> {
     if request_line.trim().is_empty() {
         bail!("empty HTTP request");
     }
-    let method = request_line
-        .split_whitespace()
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
         .next()
         .context("invalid HTTP request line")?
         .to_string();
+    let path = request_parts.next().unwrap_or("/").to_string();
 
     let mut content_length = 0_usize;
+    let mut headers = Vec::new();
     loop {
         let mut line = String::new();
         reader
@@ -2019,6 +2051,7 @@ fn read_http_request(stream: &TcpStream) -> Result<SimpleHttpRequest> {
             break;
         }
         if let Some((name, value)) = trimmed.split_once(':') {
+            headers.push((name.trim().to_string(), value.trim().to_string()));
             if name.eq_ignore_ascii_case("content-length") {
                 content_length = value
                     .trim()
@@ -2035,32 +2068,220 @@ fn read_http_request(stream: &TcpStream) -> Result<SimpleHttpRequest> {
             .context("failed to read HTTP body")?;
     }
 
-    Ok(SimpleHttpRequest { method, body })
+    Ok(SimpleHttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
 }
 
-fn forward_http_json(upstream: &HttpUpstream, body: &[u8]) -> Result<SimpleHttpResponse> {
+enum ForwardedHttpResponse {
+    Complete(SimpleHttpResponse),
+    Streamed,
+}
+
+fn forward_http_stream(
+    upstream: &HttpUpstream,
+    request: &SimpleHttpRequest,
+    client: &mut TcpStream,
+) -> Result<()> {
+    match forward_http_request(upstream, request, client)? {
+        ForwardedHttpResponse::Complete(response) => write_http_response(
+            client,
+            response.status,
+            &response.content_type,
+            &response.body,
+        ),
+        ForwardedHttpResponse::Streamed => Ok(()),
+    }
+}
+
+fn forward_http_request(
+    upstream: &HttpUpstream,
+    request: &SimpleHttpRequest,
+    client: &mut TcpStream,
+) -> Result<ForwardedHttpResponse> {
     let mut stream = TcpStream::connect(&upstream.connect_addr)
         .with_context(|| format!("failed to connect to upstream {}", upstream.connect_addr))?;
-    let request = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        upstream.path,
-        upstream.authority,
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .context("failed to write upstream request headers")?;
-    stream
-        .write_all(body)
-        .context("failed to write upstream request body")?;
+    write_upstream_http_request(&mut stream, upstream, request)?;
+    let mut reader = BufReader::new(stream);
+    let (status, reason, headers) = read_http_response_head(&mut reader)?;
 
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .context("failed to read upstream response")?;
-    parse_http_response(&response)
+    if response_should_stream(&request.method, &headers) {
+        write_http_response_head(client, status, &reason, &headers)?;
+        io::copy(&mut reader, client).context("failed to stream upstream response")?;
+        client
+            .flush()
+            .context("failed to flush streamed HTTP response")?;
+        return Ok(ForwardedHttpResponse::Streamed);
+    }
+
+    let body = if let Some(length) =
+        header_value(&headers, "content-length").and_then(|value| value.parse::<usize>().ok())
+    {
+        let mut body = vec![0_u8; length];
+        reader
+            .read_exact(&mut body)
+            .context("failed to read upstream response body")?;
+        body
+    } else {
+        let mut body = Vec::new();
+        reader
+            .read_to_end(&mut body)
+            .context("failed to read upstream response body")?;
+        body
+    };
+    let content_type = header_value(&headers, "content-type")
+        .unwrap_or("application/json")
+        .to_string();
+
+    Ok(ForwardedHttpResponse::Complete(SimpleHttpResponse {
+        status,
+        content_type,
+        body,
+    }))
 }
 
+fn write_upstream_http_request(
+    stream: &mut TcpStream,
+    upstream: &HttpUpstream,
+    request: &SimpleHttpRequest,
+) -> Result<()> {
+    let upstream_path = upstream_path_for_request(upstream, request);
+    let request_head = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\n",
+        request.method, upstream_path, upstream.authority
+    );
+    stream
+        .write_all(request_head.as_bytes())
+        .context("failed to write upstream request headers")?;
+    let mut has_content_type = false;
+    let mut has_accept = false;
+    for (name, value) in &request.headers {
+        if !http_header_is_forwardable(name) {
+            continue;
+        }
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        if name.eq_ignore_ascii_case("accept") {
+            has_accept = true;
+        }
+        write!(stream, "{name}: {value}\r\n").context("failed to write upstream header")?;
+    }
+    if request.method == "POST" && !has_content_type {
+        stream
+            .write_all(b"Content-Type: application/json\r\n")
+            .context("failed to write upstream content type")?;
+    }
+    if request.method == "POST" && !has_accept {
+        stream
+            .write_all(b"Accept: application/json, text/event-stream\r\n")
+            .context("failed to write upstream accept header")?;
+    }
+    write!(
+        stream,
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        request.body.len()
+    )
+    .context("failed to write upstream request terminator")?;
+    if !request.body.is_empty() {
+        stream
+            .write_all(&request.body)
+            .context("failed to write upstream request body")?;
+    }
+    stream.flush().context("failed to flush upstream request")?;
+    Ok(())
+}
+
+fn read_http_response_head<R>(reader: &mut R) -> Result<(u16, String, Vec<(String, String)>)>
+where
+    R: BufRead,
+{
+    let mut status_line = String::new();
+    reader
+        .read_line(&mut status_line)
+        .context("failed to read upstream HTTP status line")?;
+    if status_line.trim().is_empty() {
+        bail!("empty upstream HTTP response");
+    }
+    let (status, reason) = parse_http_status_line(status_line.trim_end_matches(['\r', '\n']))?;
+    let mut headers = Vec::new();
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .context("failed to read upstream HTTP header")?;
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            headers.push((name.trim().to_string(), value.trim().to_string()));
+        }
+    }
+    Ok((status, reason, headers))
+}
+
+fn parse_http_status_line(status_line: &str) -> Result<(u16, String)> {
+    let mut parts = status_line.split_whitespace();
+    let _version = parts.next().context("invalid upstream HTTP status line")?;
+    let status = parts
+        .next()
+        .context("invalid upstream HTTP status line")?
+        .parse::<u16>()
+        .context("invalid upstream HTTP status code")?;
+    let reason = parts.collect::<Vec<_>>().join(" ");
+    Ok((
+        status,
+        if reason.is_empty() {
+            default_http_reason(status).to_string()
+        } else {
+            reason
+        },
+    ))
+}
+
+fn response_should_stream(method: &str, headers: &[(String, String)]) -> bool {
+    header_value(headers, "content-type").is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("text/event-stream")
+    }) || header_value(headers, "transfer-encoding")
+        .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"))
+        || (method == "GET" && header_value(headers, "content-length").is_none())
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn http_header_is_forwardable(name: &str) -> bool {
+    !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host" | "connection" | "content-length" | "transfer-encoding" | "proxy-connection"
+    )
+}
+
+fn upstream_path_for_request(upstream: &HttpUpstream, request: &SimpleHttpRequest) -> String {
+    let Some((_, query)) = request.path.split_once('?') else {
+        return upstream.path.clone();
+    };
+    if upstream.path.contains('?') {
+        format!("{}&{query}", upstream.path)
+    } else {
+        format!("{}?{query}", upstream.path)
+    }
+}
+
+#[cfg(test)]
 fn parse_http_response(response: &[u8]) -> Result<SimpleHttpResponse> {
     let Some(split) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
         bail!("invalid upstream HTTP response");
@@ -2069,12 +2290,7 @@ fn parse_http_response(response: &[u8]) -> Result<SimpleHttpResponse> {
     let body = response[split + 4..].to_vec();
     let mut lines = head.lines();
     let status_line = lines.next().context("missing upstream HTTP status line")?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .context("invalid upstream HTTP status line")?
-        .parse::<u16>()
-        .context("invalid upstream HTTP status code")?;
+    let (status, _reason) = parse_http_status_line(status_line)?;
     let mut content_type = "application/json".to_string();
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
@@ -2097,13 +2313,7 @@ fn write_http_response(
     content_type: &str,
     body: &[u8],
 ) -> Result<()> {
-    let reason = match status {
-        200 => "OK",
-        400 => "Bad Request",
-        405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        _ => "OK",
-    };
+    let reason = default_http_reason(status);
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -2116,6 +2326,45 @@ fn write_http_response(
         .context("failed to write HTTP response body")?;
     stream.flush().context("failed to flush HTTP response")?;
     Ok(())
+}
+
+fn write_http_response_head(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    headers: &[(String, String)],
+) -> Result<()> {
+    write!(stream, "HTTP/1.1 {status} {reason}\r\n")
+        .context("failed to write HTTP response status")?;
+    let mut has_connection = false;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("connection") {
+            has_connection = true;
+        }
+        write!(stream, "{name}: {value}\r\n").context("failed to write HTTP response header")?;
+    }
+    if !has_connection {
+        stream
+            .write_all(b"Connection: close\r\n")
+            .context("failed to write HTTP connection header")?;
+    }
+    stream
+        .write_all(b"\r\n")
+        .context("failed to finish HTTP response headers")?;
+    stream
+        .flush()
+        .context("failed to flush HTTP response head")?;
+    Ok(())
+}
+
+fn default_http_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        400 => "Bad Request",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    }
 }
 
 fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
@@ -2480,6 +2729,19 @@ fn append_mcp_audit(
     store.append(&event)
 }
 
+fn append_mcp_audit_for_path(
+    path: Option<&Path>,
+    request: &agentfence_mcp::McpAccessRequest,
+    decision: &DecisionResult,
+    allowed: bool,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let store = AuditStore::open(path)?;
+    append_mcp_audit(Some(&store), request, decision, allowed)
+}
+
 fn resolve_policy_path(explicit: Option<&Path>, cwd: &Path) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path.to_path_buf());
@@ -2575,6 +2837,49 @@ mod tests {
         assert_eq!(parsed.status, 201);
         assert_eq!(parsed.content_type, "application/json");
         assert_eq!(parsed.body, br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn parses_http_status_reason() {
+        let (status, reason) = parse_http_status_line("HTTP/1.1 201 Created").expect("status");
+
+        assert_eq!(status, 201);
+        assert_eq!(reason, "Created");
+    }
+
+    #[test]
+    fn detects_streaming_http_responses() {
+        let event_stream = vec![("Content-Type".to_string(), "text/event-stream".to_string())];
+        assert!(response_should_stream("GET", &event_stream));
+
+        let chunked = vec![("Transfer-Encoding".to_string(), "chunked".to_string())];
+        assert!(response_should_stream("POST", &chunked));
+
+        let sized_get = vec![("Content-Length".to_string(), "2".to_string())];
+        assert!(!response_should_stream("GET", &sized_get));
+    }
+
+    #[test]
+    fn appends_client_query_to_upstream_path() {
+        let upstream = parse_http_upstream("http://127.0.0.1:3000/mcp").expect("upstream");
+        let request = SimpleHttpRequest {
+            method: "GET".to_string(),
+            path: "/mcp?session=abc".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+
+        assert_eq!(
+            upstream_path_for_request(&upstream, &request),
+            "/mcp?session=abc"
+        );
+
+        let upstream =
+            parse_http_upstream("http://127.0.0.1:3000/mcp?transport=sse").expect("upstream");
+        assert_eq!(
+            upstream_path_for_request(&upstream, &request),
+            "/mcp?transport=sse&session=abc"
+        );
     }
 
     #[test]
