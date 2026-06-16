@@ -60,6 +60,11 @@
       "filesystem": {
         "enabled": true,
         "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 120,
+          "windowSeconds": 60
+        },
         "tools": {
           "read_file": "allow",
           "write_file": "ask",
@@ -73,4 +78,3 @@
     "store": ".agentfence/audit.sqlite"
   }
 }
-

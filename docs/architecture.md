@@ -102,6 +102,6 @@ agentfence run -- claude
 agentfence run -- npm test
 ```
 
-The initial MCP stdio proxy is available through `agentfence mcp proxy`. It inspects client-to-server JSON-RPC calls for `tools/call`, `resources/read`, and `prompts/get`, then blocks denied requests before they reach the upstream server. It also tracks `tools/list`, `resources/list`, and `prompts/list` requests so denied entries can be filtered out of upstream list responses.
+The initial MCP stdio proxy is available through `agentfence mcp proxy`. It inspects client-to-server JSON-RPC calls for `tools/call`, `resources/read`, and `prompts/get`, then blocks denied or rate-limited requests before they reach the upstream server. It also tracks `tools/list`, `resources/list`, and `prompts/list` requests so denied entries can be filtered out of upstream list responses.
 
 Guarded shell commands also extract URL-like arguments and common Git/SSH remotes, then evaluate those domains against `network` policy before execution. Future milestones should add deeper pseudo-shell integration, broader MCP transport support, external tool broker adapters, and optional OS-level or proxy-level network/filesystem controls.

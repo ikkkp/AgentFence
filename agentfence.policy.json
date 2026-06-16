@@ -121,6 +121,11 @@
       "github": {
         "enabled": true,
         "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 30,
+          "windowSeconds": 60
+        },
         "tools": {
           "list_pull_requests": "allow",
           "list_issues": "allow",
@@ -131,6 +136,11 @@
       "filesystem": {
         "enabled": true,
         "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 120,
+          "windowSeconds": 60
+        },
         "tools": {
           "read_file": "allow",
           "write_file": "ask",

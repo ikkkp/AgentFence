@@ -233,6 +233,9 @@
         "decision": {
           "$ref": "#/$defs/decision"
         },
+        "rateLimit": {
+          "$ref": "#/$defs/rateLimit"
+        },
         "tools": {
           "$ref": "#/$defs/decisionMap"
         },
@@ -244,6 +247,24 @@
         }
       }
     },
+    "rateLimit": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxRequests": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "windowSeconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
     "decisionMap": {
       "type": "object",
       "additionalProperties": {
@@ -252,4 +273,3 @@
     }
   }
 }
-

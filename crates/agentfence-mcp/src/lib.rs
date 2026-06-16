@@ -1,8 +1,10 @@
-use agentfence_policy::{Decision, DecisionResult, Policy, evaluate_mcp};
+use agentfence_policy::{Decision, DecisionResult, Policy, RateLimitPolicy, Risk, evaluate_mcp};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, Read, Write};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +26,60 @@ pub struct McpAccessDecision {
 pub fn decide(policy: &Policy, request: McpAccessRequest) -> McpAccessDecision {
     let decision = evaluate_mcp(policy, &request.server, &request.kind, &request.name);
     McpAccessDecision { request, decision }
+}
+
+#[derive(Debug, Clone)]
+pub struct McpRateLimiter {
+    server: String,
+    policy: Option<RateLimitPolicy>,
+    hits: HashMap<String, VecDeque<Instant>>,
+}
+
+impl McpRateLimiter {
+    pub fn for_server(policy: &Policy, server: &str) -> Self {
+        let policy = policy.mcp.servers.get(server).and_then(|server_policy| {
+            server_policy
+                .rate_limit
+                .enabled
+                .then(|| server_policy.rate_limit.clone())
+        });
+
+        Self {
+            server: server.to_string(),
+            policy,
+            hits: HashMap::new(),
+        }
+    }
+
+    pub fn check(&mut self, request: &McpAccessRequest) -> Option<DecisionResult> {
+        let policy = self.policy.as_ref()?;
+        let window = Duration::from_secs(policy.window_seconds);
+        let now = Instant::now();
+        let key = format!("{}:{}", request.kind, request.name);
+        let hits = self.hits.entry(key).or_default();
+
+        while let Some(first) = hits.front() {
+            if now.duration_since(*first) <= window {
+                break;
+            }
+            hits.pop_front();
+        }
+
+        if hits.len() >= policy.max_requests as usize {
+            return Some(DecisionResult {
+                decision: Decision::Deny,
+                reason: format!(
+                    "MCP rate limit exceeded: max {} request(s) per {} second(s)",
+                    policy.max_requests, policy.window_seconds
+                ),
+                matched_rule: Some(format!("mcp.servers.{}.rateLimit", self.server)),
+                risk: Risk::High,
+            });
+        }
+
+        hits.push_back(now);
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +314,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::io::Cursor;
 
-    use agentfence_policy::{Decision, McpServerPolicy, Policy};
+    use agentfence_policy::{Decision, McpServerPolicy, Policy, RateLimitPolicy};
 
     use super::*;
 
@@ -334,5 +390,38 @@ mod tests {
             Some("s:abc")
         );
         assert_eq!(message_id_key(&json!({ "id": null })), None);
+    }
+
+    #[test]
+    fn rate_limiter_denies_after_policy_window_capacity() {
+        let mut policy = Policy::default();
+        policy.mcp.servers.insert(
+            "github".to_string(),
+            McpServerPolicy {
+                rate_limit: RateLimitPolicy {
+                    enabled: true,
+                    max_requests: 1,
+                    window_seconds: 60,
+                },
+                ..McpServerPolicy::default()
+            },
+        );
+        let request = McpAccessRequest {
+            server: "github".to_string(),
+            kind: "tool".to_string(),
+            name: "create_pull_request".to_string(),
+            arguments: Value::Null,
+        };
+
+        let mut limiter = McpRateLimiter::for_server(&policy, "github");
+
+        assert!(limiter.check(&request).is_none());
+        let denied = limiter.check(&request).expect("second call should deny");
+
+        assert_eq!(denied.decision, Decision::Deny);
+        assert_eq!(
+            denied.matched_rule.as_deref(),
+            Some("mcp.servers.github.rateLimit")
+        );
     }
 }

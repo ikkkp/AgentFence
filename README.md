@@ -9,7 +9,7 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, MCP checks, MCP stdio proxying, and audit log reads.
+- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, MCP checks, MCP stdio proxying, MCP rate limits, and audit log reads.
 - `agentfenced` local HTTP daemon with health, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, audit, MCP, and skill controls.
@@ -131,6 +131,8 @@ Audit events redact common secret shapes such as `token=...`, `password=...`, Gi
 Natural-language policy management currently generates JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
 
 The MCP stdio proxy enforces `tools/call`, `resources/read`, and `prompts/get`, and filters denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny in stdio proxy mode, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
+
+MCP server policies can include `rateLimit` windows. Calls over the limit receive an MCP error response and are not forwarded upstream.
 
 Policy bundles include a SHA-256 digest for integrity verification and support Ed25519 signatures for team policy distribution.
 

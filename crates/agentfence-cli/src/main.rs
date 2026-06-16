@@ -864,6 +864,7 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
     let policy = load_policy(&policy_path)?;
     let policy_for_upstream = policy.clone();
     let server_for_upstream = args.server.clone();
+    let mut rate_limiter = agentfence_mcp::McpRateLimiter::for_server(&policy, &args.server);
 
     let mut child = Command::new(&args.command[0])
         .args(&args.command[1..])
@@ -978,6 +979,17 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
         } else {
             allowed
         };
+        let mut denial_decision = decision.decision.clone();
+        let allowed = if allowed {
+            if let Some(rate_limit_decision) = rate_limiter.check(&decision.request) {
+                denial_decision = rate_limit_decision;
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
 
         if allowed {
             agentfence_mcp::write_frame(&mut upstream_stdin, &frame)?;
@@ -990,7 +1002,7 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
                     decision.request.kind,
                     decision.request.server,
                     decision.request.name,
-                    decision.decision.reason
+                    denial_decision.reason
                 ),
             );
             let response_frame = agentfence_mcp::frame_from_json(frame.kind, &response)?;

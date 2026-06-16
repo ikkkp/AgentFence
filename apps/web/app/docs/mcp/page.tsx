@@ -17,6 +17,24 @@ export default function McpPage() {
         The proxy enforces tools/call, resources/read, and prompts/get, filters denied list entries,
         and can wait on the daemon approval queue with --ask-mode queue.
       </p>
+      <h2>Rate limits</h2>
+      <p>
+        Per-server rateLimit policy blocks excessive MCP calls inside the proxy before they reach the
+        upstream server.
+      </p>
+      <pre>{`{
+  "mcp": {
+    "servers": {
+      "github": {
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 30,
+          "windowSeconds": 60
+        }
+      }
+    }
+  }
+}`}</pre>
     </main>
   );
 }

@@ -52,6 +52,11 @@
       "github": {
         "enabled": true,
         "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 30,
+          "windowSeconds": 60
+        },
         "tools": {
           "list_pull_requests": "allow",
           "create_pull_request": "ask",
@@ -70,4 +75,3 @@
     "store": ".agentfence/audit.sqlite"
   }
 }
-

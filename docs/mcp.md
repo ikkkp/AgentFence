@@ -47,6 +47,7 @@ The proxy inspects client-to-server JSON-RPC messages:
 - `resources/read` maps to MCP `resource` policy.
 - `prompts/get` maps to MCP `prompt` policy.
 - `tools/list`, `resources/list`, and `prompts/list` responses are filtered to remove denied entries.
+- `rateLimit` blocks excessive allowed calls before they reach the upstream server.
 
 Allowed requests are forwarded to the upstream server. Denied requests receive a JSON-RPC error response and never reach upstream.
 
@@ -61,6 +62,30 @@ Use `--ask-mode allow` only for trusted local testing. Use `--ask-mode queue` to
 ```bash
 agentfence mcp proxy --server github --ask-mode queue -- node server.js
 ```
+
+## Rate Limits
+
+Rate limits are configured per MCP server and enforced inside the stdio proxy process:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "github": {
+        "enabled": true,
+        "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 30,
+          "windowSeconds": 60
+        }
+      }
+    }
+  }
+}
+```
+
+When the limit is exceeded, the proxy returns an MCP error response and does not forward the call to the upstream server.
 
 ## Remaining Proxy Work
 

@@ -65,6 +65,11 @@ MCP rules control server availability and per-tool/resource/prompt decisions.
       "github": {
         "enabled": true,
         "decision": "ask",
+        "rateLimit": {
+          "enabled": true,
+          "maxRequests": 30,
+          "windowSeconds": 60
+        },
         "tools": {
           "list_pull_requests": "allow",
           "create_pull_request": "ask",
@@ -75,6 +80,8 @@ MCP rules control server availability and per-tool/resource/prompt decisions.
   }
 }
 ```
+
+`rateLimit` is enforced by `agentfence mcp proxy` before a permitted call reaches the upstream server.
 
 ## Filesystem Rules
 

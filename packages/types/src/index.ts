@@ -47,6 +47,11 @@ export interface AgentFencePolicy {
       {
         enabled?: boolean;
         decision?: Decision;
+        rateLimit?: {
+          enabled?: boolean;
+          maxRequests?: number;
+          windowSeconds?: number;
+        };
         tools?: Record<string, Decision>;
         resources?: Record<string, Decision>;
         prompts?: Record<string, Decision>;

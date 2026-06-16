@@ -269,6 +269,8 @@ pub struct McpServerPolicy {
     pub enabled: bool,
     #[serde(default)]
     pub decision: Decision,
+    #[serde(default, skip_serializing_if = "RateLimitPolicy::is_disabled")]
+    pub rate_limit: RateLimitPolicy,
     #[serde(default)]
     pub tools: BTreeMap<String, Decision>,
     #[serde(default)]
@@ -282,9 +284,37 @@ impl Default for McpServerPolicy {
         Self {
             enabled: true,
             decision: Decision::Ask,
+            rate_limit: RateLimitPolicy::default(),
             tools: BTreeMap::new(),
             resources: BTreeMap::new(),
             prompts: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_rate_limit_max_requests")]
+    pub max_requests: u32,
+    #[serde(default = "default_rate_limit_window_seconds")]
+    pub window_seconds: u64,
+}
+
+impl RateLimitPolicy {
+    pub fn is_disabled(&self) -> bool {
+        !self.enabled
+    }
+}
+
+impl Default for RateLimitPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_requests: default_rate_limit_max_requests(),
+            window_seconds: default_rate_limit_window_seconds(),
         }
     }
 }
@@ -1347,6 +1377,14 @@ fn glob_like_match(value: &str, pattern: &str) -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_rate_limit_max_requests() -> u32 {
+    60
+}
+
+fn default_rate_limit_window_seconds() -> u64 {
+    60
 }
 
 fn default_ttl() -> u64 {
