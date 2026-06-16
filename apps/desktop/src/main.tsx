@@ -26,6 +26,8 @@ import "./styles.css";
 
 const DEFAULT_DAEMON_BASE = "http://127.0.0.1:37421";
 type AuditDecisionFilter = "all" | "allow" | "deny" | "ask";
+type QuickRuleScope = "shell" | "network" | "skill";
+type QuickRuleDecision = "allow" | "ask" | "deny";
 type PolicyDiff = { hasChanges: boolean; summary: string; text: string };
 type DiffOperation = { type: "same" | "add" | "remove"; text: string };
 
@@ -117,6 +119,9 @@ function App() {
   const [policyDirty, setPolicyDirty] = useState(false);
   const [policySuggestions, setPolicySuggestions] = useState<PolicySuggestion[]>([]);
   const [suggestionStatus, setSuggestionStatus] = useState("Suggestions not loaded");
+  const [quickRuleScope, setQuickRuleScope] = useState<QuickRuleScope>("shell");
+  const [quickRuleDecision, setQuickRuleDecision] = useState<QuickRuleDecision>("allow");
+  const [quickRuleValue, setQuickRuleValue] = useState("");
   const [simulatorInput, setSimulatorInput] = useState("git status https://transfer.sh/file");
   const [simulatorResult, setSimulatorResult] = useState<ShellSimulationOutput | null>(null);
   const [simulatorStatus, setSimulatorStatus] = useState("Ready");
@@ -291,6 +296,48 @@ function App() {
       setPolicyStatusKind("neutral");
     } catch (error) {
       setPolicyStatus(error instanceof Error ? error.message : "Suggestion patch failed");
+      setPolicyStatusKind("invalid");
+    }
+  }
+
+  function addQuickRule() {
+    const value = quickRuleValue.trim();
+    if (!value) {
+      setPolicyStatus("Enter a rule value");
+      setPolicyStatusKind("invalid");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(policyText);
+      if (!isRecord(parsed)) {
+        throw new Error("Policy root must be an object");
+      }
+      const patched = cloneJson(parsed);
+      if (!isRecord(patched)) {
+        throw new Error("Policy root must be an object");
+      }
+
+      if (quickRuleScope === "shell") {
+        addShellQuickRule(patched, quickRuleDecision, value);
+      } else if (quickRuleScope === "network") {
+        addNetworkQuickRule(patched, quickRuleDecision, value);
+      } else {
+        addSkillQuickRule(patched, quickRuleDecision, value);
+      }
+
+      const formatted = JSON.stringify(patched, null, 2);
+      setPolicyText(formatted);
+      setPolicyDirty(formatted !== savedPolicyText);
+      setQuickRuleValue("");
+      setPolicyProposal(JSON.stringify({
+        summary: `Added ${quickRuleScope} ${quickRuleDecision} rule for ${value}`,
+        operations: []
+      }, null, 2));
+      setPolicyStatus(`Added ${quickRuleScope} rule`);
+      setPolicyStatusKind("neutral");
+    } catch (error) {
+      setPolicyStatus(error instanceof Error ? error.message : "Quick rule failed");
       setPolicyStatusKind("invalid");
     }
   }
@@ -539,6 +586,41 @@ function App() {
                 ))}
               </div>
             )}
+            <div className="quick-rule" aria-label="Structured quick rule">
+              <div className="quick-rule-header">
+                <span>Structured rule</span>
+                <strong>{quickRuleScope}</strong>
+              </div>
+              <div className="quick-rule-grid">
+                <select
+                  value={quickRuleScope}
+                  onChange={(event) => setQuickRuleScope(event.target.value as QuickRuleScope)}
+                  aria-label="Quick rule scope"
+                >
+                  <option value="shell">Shell</option>
+                  <option value="network">Network</option>
+                  <option value="skill">Skill</option>
+                </select>
+                <select
+                  value={quickRuleDecision}
+                  onChange={(event) => setQuickRuleDecision(event.target.value as QuickRuleDecision)}
+                  aria-label="Quick rule decision"
+                >
+                  <option value="allow">Allow</option>
+                  <option value="ask">Ask</option>
+                  <option value="deny">Deny</option>
+                </select>
+                <input
+                  value={quickRuleValue}
+                  onChange={(event) => setQuickRuleValue(event.target.value)}
+                  placeholder={quickRulePlaceholder(quickRuleScope)}
+                  aria-label="Quick rule value"
+                />
+                <button className="text-button primary" onClick={addQuickRule}>
+                  <Check size={15} />Add
+                </button>
+              </div>
+            </div>
             <div className="policy-toolbar">
               <button className="text-button" onClick={refreshPolicy}><RefreshCw size={15} />Reload</button>
               <button className="text-button" onClick={validatePolicy}><CheckCircle2 size={15} />Validate</button>
@@ -791,6 +873,16 @@ function normalizeDaemonBase(value: string) {
   return trimmed || DEFAULT_DAEMON_BASE;
 }
 
+function quickRulePlaceholder(scope: QuickRuleScope) {
+  if (scope === "shell") {
+    return "pnpm test";
+  }
+  if (scope === "network") {
+    return "api.example.com";
+  }
+  return "code-review";
+}
+
 function parseCommandLine(value: string) {
   const matches = value.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   return matches.map((item) => {
@@ -802,6 +894,86 @@ function parseCommandLine(value: string) {
     }
     return item;
   });
+}
+
+function addShellQuickRule(policy: Record<string, unknown>, decision: QuickRuleDecision, command: string) {
+  const shell = ensureRecordProperty(policy, "shell");
+  const rules = ensureArrayProperty(shell, "rules");
+  const id = `${decision}-shell-${slugifyRuleId(command)}`;
+  rules.unshift({
+    id,
+    description: `Quick ${decision} rule for ${command}.`,
+    match: {
+      commands: [command]
+    },
+    decision,
+    reason: `added from AgentFence desktop quick rule`
+  });
+}
+
+function addNetworkQuickRule(policy: Record<string, unknown>, decision: QuickRuleDecision, domain: string) {
+  if (decision === "ask") {
+    throw new Error("Network quick rules support allow or deny domains");
+  }
+  const network = ensureRecordProperty(policy, "network");
+  const key = decision === "allow" ? "allowDomains" : "denyDomains";
+  const domains = ensureArrayProperty(network, key);
+  if (!domains.some((item) => typeof item === "string" && item.toLowerCase() === domain.toLowerCase())) {
+    domains.push(domain);
+  }
+}
+
+function addSkillQuickRule(policy: Record<string, unknown>, decision: QuickRuleDecision, skill: string) {
+  const skills = ensureRecordProperty(policy, "skills");
+  if (decision === "ask") {
+    const rules = ensureArrayProperty(skills, "rules");
+    rules.push({
+      skill,
+      decision,
+      reason: "added from AgentFence desktop quick rule"
+    });
+    return;
+  }
+  const key = decision === "allow" ? "allow" : "deny";
+  const values = ensureArrayProperty(skills, key);
+  if (!values.some((item) => typeof item === "string" && item.toLowerCase() === skill.toLowerCase())) {
+    values.push(skill);
+  }
+}
+
+function ensureRecordProperty(parent: Record<string, unknown>, key: string) {
+  const current = parent[key];
+  if (current === undefined) {
+    const next: Record<string, unknown> = {};
+    parent[key] = next;
+    return next;
+  }
+  if (!isRecord(current)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return current;
+}
+
+function ensureArrayProperty(parent: Record<string, unknown>, key: string) {
+  const current = parent[key];
+  if (current === undefined) {
+    const next: unknown[] = [];
+    parent[key] = next;
+    return next;
+  }
+  if (!Array.isArray(current)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return current;
+}
+
+function slugifyRuleId(value: string) {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug || "rule";
 }
 
 function applyJsonPatch(root: unknown, operations: JsonPatchOperation[]) {

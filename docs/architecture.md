@@ -74,7 +74,7 @@ The approval queue lives in `crates/agentfence-approval` and is hosted in memory
 
 ### Desktop UI
 
-The desktop app lives in `apps/desktop`. It uses Tauri, React, TypeScript, and Vite. The current UI has dashboard, approval, audit, policy, MCP, skill, export, and settings surfaces. The policy editor validates JSON, shows a line-level diff against the last loaded or saved policy, and can apply daemon-generated audit suggestions into the editable policy before changes are saved. Settings can point the UI at a different local daemon endpoint and test local approval notifications; by default it checks daemon health through `http://127.0.0.1:37421/health`.
+The desktop app lives in `apps/desktop`. It uses Tauri, React, TypeScript, and Vite. The current UI has dashboard, approval, audit, policy, MCP, skill, export, and settings surfaces. The policy editor validates JSON, shows a line-level diff against the last loaded or saved policy, can apply daemon-generated audit suggestions, and includes structured quick-rule controls for shell commands, network domains, and skills before changes are saved. Settings can point the UI at a different local daemon endpoint and test local approval notifications; by default it checks daemon health through `http://127.0.0.1:37421/health`.
 
 ### Website
 

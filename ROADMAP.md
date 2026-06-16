@@ -19,7 +19,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 
 - Milestone 0 foundation: Cargo workspace, pnpm workspace, policy schema, docs, CI, desktop app, and website.
 - Milestone 1 shell permission MVP: `agentfence run`, line-oriented `agentfence shell`, command risk classification, allow/deny/ask decisions, CLI approval prompt, policy discovery, and SQLite audit logs.
-- Milestone 2 desktop MVP: Tauri control plane with daemon health, live approvals, policy assistant preview, audit-driven policy suggestions, audit/export surfaces, MCP and skill controls.
+- Milestone 2 desktop MVP: Tauri control plane with daemon health, live approvals, policy assistant preview, audit-driven policy suggestions, structured quick-rule editing, audit/export surfaces, MCP and skill controls.
 - Milestone 3 MCP proxy: stdio and scoped HTTP JSON-RPC/SSE proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering for complete JSON responses, daemon-backed ask mode, rate limits, and audit events.
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, audit-driven narrower-rule suggestions after repeated approvals, plus side-effect-free shell simulation and explanations.
@@ -27,7 +27,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles, per-agent setup guides, and CLI wrapper installation.
 - Milestone 8 foundations: signed policy bundles, verification, import, organization policy templates, audit export, and local audit reports.
 
-Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, deeper stream-aware MCP filtering, richer visual policy editing, and optional team/cloud features.
+Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, deeper stream-aware MCP filtering, richer guided policy review, and optional team/cloud features.
 
 ## Guiding Principles
 
@@ -306,7 +306,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 
 - Keep CLI, daemon, desktop, and website verification green in CI.
 - Add installer packaging that can place generated wrappers onto PATH automatically.
-- Add richer desktop policy editing for structured rule forms and guided JSON Patch review.
+- Add guided JSON Patch review with approve/reject controls per operation.
 - Add deeper stream-aware MCP filtering for streamed list responses.
 - Explore full PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.

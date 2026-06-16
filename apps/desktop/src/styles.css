@@ -396,6 +396,54 @@ nav a:hover {
   justify-content: flex-end;
 }
 
+.quick-rule {
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 11px;
+}
+
+.quick-rule-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.quick-rule-header span {
+  color: #607168;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quick-rule-header strong {
+  background: #eef3f6;
+  border-radius: 999px;
+  color: #45616d;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.quick-rule-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(105px, 0.7fr) minmax(105px, 0.7fr) minmax(180px, 1.5fr) auto;
+}
+
+.quick-rule-grid input,
+.quick-rule-grid select {
+  background: #ffffff;
+  border: 1px solid #d9e2d8;
+  border-radius: 8px;
+  color: #17211c;
+  min-height: 36px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
 .policy-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -767,7 +815,8 @@ th {
   .grid,
   .filter-row,
   .suggestion-item,
-  .suggestion-toolbar {
+  .suggestion-toolbar,
+  .quick-rule-grid {
     grid-template-columns: 1fr;
   }
 
