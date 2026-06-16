@@ -115,6 +115,7 @@ agentfence integrations list
 agentfence integrations show codex --format shell
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
+agentfence audit report --format markdown --output audit-report.md
 agentfence approvals list
 agentfence approve <approval-id> --decision allowed
 agentfence filesystem check --operation read --path ~/.ssh/id_rsa

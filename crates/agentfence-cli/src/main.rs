@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
@@ -152,6 +152,16 @@ enum AuditCommands {
         #[arg(long)]
         audit: Option<PathBuf>,
     },
+    Report {
+        #[arg(long, default_value = "json")]
+        format: AuditReportFormat,
+        #[arg(long, default_value_t = 1000)]
+        limit: usize,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        audit: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -167,6 +177,12 @@ impl std::str::FromStr for AuditFormatArg {
             _ => bail!("unknown audit export format {value}"),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AuditReportFormat {
+    Json,
+    Markdown,
 }
 
 #[derive(Debug, Subcommand)]
@@ -692,7 +708,152 @@ fn audit_command(command: AuditCommands) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        AuditCommands::Report {
+            format,
+            limit,
+            output,
+            audit,
+        } => {
+            let path = audit.unwrap_or_else(|| PathBuf::from(".agentfence/audit.sqlite"));
+            let store = AuditStore::open(path)?;
+            let events = store.list_recent(limit)?;
+            let report = match format {
+                AuditReportFormat::Json => {
+                    serde_json::to_string_pretty(&audit_report_json(&events, limit))?
+                }
+                AuditReportFormat::Markdown => audit_report_markdown(&events, limit),
+            };
+            if let Some(output) = output {
+                fs::write(&output, report).with_context(|| {
+                    format!("failed to write audit report {}", output.display())
+                })?;
+                println!("created audit report {}", output.display());
+            } else {
+                println!("{report}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+fn audit_report_json(events: &[AuditEvent], limit: usize) -> serde_json::Value {
+    serde_json::json!({
+        "limit": limit,
+        "totalEvents": events.len(),
+        "newestEventAt": events.first().map(|event| event.timestamp.to_rfc3339()),
+        "oldestEventAt": events.last().map(|event| event.timestamp.to_rfc3339()),
+        "decisions": count_by(events, |event| &event.decision),
+        "risks": count_by(events, |event| &event.risk),
+        "actors": count_by(events, |event| &event.actor),
+        "actions": count_by(events, |event| &event.action),
+        "reviewEvents": events
+            .iter()
+            .filter(|event| event.decision == "deny" || event.decision == "ask")
+            .take(20)
+            .map(|event| serde_json::json!({
+                "timestamp": event.timestamp.to_rfc3339(),
+                "actor": event.actor,
+                "action": event.action,
+                "decision": event.decision,
+                "risk": event.risk,
+                "subject": event.subject,
+                "reason": event.reason,
+                "matchedRule": event.matched_rule
+            }))
+            .collect::<Vec<_>>()
+    })
+}
+
+fn audit_report_markdown(events: &[AuditEvent], limit: usize) -> String {
+    let mut output = String::new();
+    output.push_str("# AgentFence Audit Report\n\n");
+    output.push_str(&format!("- Limit: {limit}\n"));
+    output.push_str(&format!("- Total events: {}\n", events.len()));
+    output.push_str(&format!(
+        "- Newest event: {}\n",
+        events
+            .first()
+            .map(|event| event.timestamp.to_rfc3339())
+            .unwrap_or_else(|| "n/a".to_string())
+    ));
+    output.push_str(&format!(
+        "- Oldest event: {}\n\n",
+        events
+            .last()
+            .map(|event| event.timestamp.to_rfc3339())
+            .unwrap_or_else(|| "n/a".to_string())
+    ));
+
+    output.push_str("## Decisions\n\n");
+    output.push_str(&count_table(
+        "Decision",
+        &count_by(events, |event| &event.decision),
+    ));
+    output.push_str("\n## Risks\n\n");
+    output.push_str(&count_table("Risk", &count_by(events, |event| &event.risk)));
+    output.push_str("\n## Actors\n\n");
+    output.push_str(&count_table(
+        "Actor",
+        &count_by(events, |event| &event.actor),
+    ));
+    output.push_str("\n## Actions\n\n");
+    output.push_str(&count_table(
+        "Action",
+        &count_by(events, |event| &event.action),
+    ));
+
+    output.push_str("\n## Review Events\n\n");
+    let review_events = events
+        .iter()
+        .filter(|event| event.decision == "deny" || event.decision == "ask")
+        .take(20)
+        .collect::<Vec<_>>();
+    if review_events.is_empty() {
+        output.push_str("No deny or ask events in the selected window.\n");
+    } else {
+        output.push_str("| Time | Actor | Decision | Risk | Action | Subject |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- |\n");
+        for event in review_events {
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                event.timestamp.to_rfc3339(),
+                escape_markdown_table(&event.actor),
+                escape_markdown_table(&event.decision),
+                escape_markdown_table(&event.risk),
+                escape_markdown_table(&event.action),
+                escape_markdown_table(&event.subject)
+            ));
+        }
+    }
+
+    output
+}
+
+fn count_by<'a>(
+    events: &'a [AuditEvent],
+    key: impl Fn(&'a AuditEvent) -> &'a str,
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for event in events {
+        *counts.entry(key(event).to_string()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn count_table(label: &str, counts: &BTreeMap<String, usize>) -> String {
+    if counts.is_empty() {
+        return "No events.\n".to_string();
+    }
+
+    let mut output = format!("| {label} | Count |\n| --- | ---: |\n");
+    for (key, count) in counts {
+        output.push_str(&format!("| {} | {count} |\n", escape_markdown_table(key)));
+    }
+    output
+}
+
+fn escape_markdown_table(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 fn approvals_command(command: ApprovalCommands) -> Result<ExitCode> {

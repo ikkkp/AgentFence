@@ -10,7 +10,11 @@ export default function AuditPage() {
         Guarded shell commands and MCP proxy decisions are recorded when audit logging is enabled.
       </p>
       <pre>{`agentfence audit export --format json --output audit.json
-agentfence audit export --format csv --output audit.csv`}</pre>
+agentfence audit export --format csv --output audit.csv
+agentfence audit report --format markdown --output audit-report.md`}</pre>
+      <p>
+        Reports summarize decisions, risks, actors, actions, and recent deny or ask events.
+      </p>
       <h2>Daemon endpoint</h2>
       <p>
         The daemon can return recent rows for the desktop app or export them for compliance workflows.

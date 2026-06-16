@@ -9,13 +9,18 @@ Shell events use action `shell.exec`. MCP proxy events use `mcp.tool`, `mcp.reso
 ```bash
 agentfence audit export --format json --output audit.json
 agentfence audit export --format csv --output audit.csv
+agentfence audit report --format json --output audit-report.json
+agentfence audit report --format markdown --output audit-report.md
 ```
 
 Use `--limit` to cap the number of recent rows:
 
 ```bash
 agentfence audit export --format csv --limit 500
+agentfence audit report --format markdown --limit 500
 ```
+
+Reports summarize recent events by decision, risk, actor, and action, then list the latest deny or ask events that should be reviewed.
 
 ## Daemon
 

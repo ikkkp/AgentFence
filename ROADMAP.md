@@ -25,7 +25,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, plus side-effect-free shell simulation and explanations.
 - Milestone 6 website/docs: homepage, download page, security page, changelog, blog foundation, quickstart, policy, MCP, and audit documentation.
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
-- Milestone 8 foundations: signed policy bundles, verification, import, and audit export.
+- Milestone 8 foundations: signed policy bundles, verification, import, audit export, and local audit reports.
 
 Remaining hardening work is concentrated around deeper shell interception, OS-level filesystem controls, full network proxying, HTTP/SSE MCP transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
 
