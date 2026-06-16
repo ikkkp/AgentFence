@@ -7,6 +7,11 @@ export default function IntegrationsPage() {
         Launch local coding agents through AgentFence wrappers, or place the MCP proxy between an
         agent and its upstream MCP servers.
       </p>
+      <h2>Built-in profiles</h2>
+      <pre>{`agentfence integrations list
+agentfence integrations show codex --format shell
+agentfence integrations show claude-code --format powershell
+agentfence integrations show generic-mcp --format json`}</pre>
       <h2>Codex</h2>
       <pre>{`agentfence init --preset developer --project codex-project
 agentfence run --actor codex -- codex`}</pre>

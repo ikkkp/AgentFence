@@ -9,7 +9,7 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, MCP checks, MCP stdio proxying, MCP rate limits, and audit log reads.
+- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio proxying, MCP rate limits, and audit log reads.
 - `agentfenced` local HTTP daemon with health, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
@@ -111,6 +111,8 @@ agentfence simulate shell -- git status https://transfer.sh/file
 agentfence run -- git status --short
 agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude
+agentfence integrations list
+agentfence integrations show codex --format shell
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
 agentfence approvals list

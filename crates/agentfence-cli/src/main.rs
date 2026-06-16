@@ -56,6 +56,10 @@ enum Commands {
         #[command(subcommand)]
         command: SkillCommands,
     },
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationCommands,
+    },
     Simulate {
         #[command(subcommand)]
         command: SimulateCommands,
@@ -283,6 +287,77 @@ enum SkillCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum IntegrationCommands {
+    List,
+    Show {
+        profile: IntegrationProfile,
+        #[arg(long, default_value = "json")]
+        format: IntegrationFormat,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum IntegrationProfile {
+    Codex,
+    ClaudeCode,
+    CursorStyle,
+    GenericMcp,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum IntegrationFormat {
+    Json,
+    Shell,
+    #[value(name = "powershell")]
+    PowerShell,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IntegrationProfileSpec {
+    slug: &'static str,
+    agent: &'static str,
+    actor: &'static str,
+    recommended_preset: &'static str,
+    init_project: Option<&'static str>,
+    policy: Option<&'static str>,
+    command: &'static [&'static str],
+    audit_store: Option<&'static str>,
+    daemon: Option<&'static str>,
+    notes: &'static [&'static str],
+}
+
+const CODEX_COMMAND: &[&str] = &["agentfence", "run", "--actor", "codex", "--", "codex"];
+const CLAUDE_CODE_COMMAND: &[&str] = &[
+    "agentfence",
+    "run",
+    "--actor",
+    "claude-code",
+    "--",
+    "claude",
+];
+const CURSOR_STYLE_COMMAND: &[&str] = &[
+    "agentfence",
+    "run",
+    "--actor",
+    "cursor-agent",
+    "--",
+    "node",
+    "./agent-entrypoint.js",
+];
+const GENERIC_MCP_COMMAND: &[&str] = &[
+    "agentfence",
+    "mcp",
+    "proxy",
+    "--server",
+    "github",
+    "--ask-mode",
+    "queue",
+    "--",
+    "node",
+    "path/to/github-mcp-server.js",
+];
+
+#[derive(Debug, Subcommand)]
 enum McpCommands {
     Check {
         #[arg(long)]
@@ -345,6 +420,7 @@ fn run() -> Result<ExitCode> {
         Commands::Filesystem { command } => filesystem_command(command),
         Commands::Network { command } => network_command(command),
         Commands::Skill { command } => skill_command(command),
+        Commands::Integrations { command } => integrations_command(command),
         Commands::Simulate { command } => simulate_command(command),
         Commands::Policy { command } => policy_command(command),
         Commands::Mcp { command } => mcp_command(command),
@@ -830,6 +906,184 @@ fn skill_command(command: SkillCommands) -> Result<ExitCode> {
             print_decision(&result);
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+fn integrations_command(command: IntegrationCommands) -> Result<ExitCode> {
+    match command {
+        IntegrationCommands::List => {
+            for profile in [
+                IntegrationProfile::Codex,
+                IntegrationProfile::ClaudeCode,
+                IntegrationProfile::CursorStyle,
+                IntegrationProfile::GenericMcp,
+            ] {
+                let spec = integration_profile_spec(profile);
+                println!(
+                    "{:<14} actor={:<14} preset={:<10} command={}",
+                    spec.slug,
+                    spec.actor,
+                    spec.recommended_preset,
+                    quote_command(spec.command, IntegrationFormat::Shell)
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        IntegrationCommands::Show { profile, format } => {
+            let spec = integration_profile_spec(profile);
+            match format {
+                IntegrationFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&integration_json(spec))?);
+                }
+                IntegrationFormat::Shell | IntegrationFormat::PowerShell => {
+                    print_integration_script(spec, format);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn integration_profile_spec(profile: IntegrationProfile) -> IntegrationProfileSpec {
+    match profile {
+        IntegrationProfile::Codex => IntegrationProfileSpec {
+            slug: "codex",
+            agent: "codex",
+            actor: "codex",
+            recommended_preset: "developer",
+            init_project: Some("codex-project"),
+            policy: Some("examples/codex.policy.json"),
+            command: CODEX_COMMAND,
+            audit_store: Some(".agentfence/audit.sqlite"),
+            daemon: None,
+            notes: &[
+                "Run Codex through this wrapper to enforce shell and network-domain policy before execution.",
+                "Use agentfence mcp proxy for MCP servers configured inside Codex.",
+            ],
+        },
+        IntegrationProfile::ClaudeCode => IntegrationProfileSpec {
+            slug: "claude-code",
+            agent: "claude-code",
+            actor: "claude-code",
+            recommended_preset: "developer",
+            init_project: Some("claude-code-project"),
+            policy: Some("examples/claude-code.policy.json"),
+            command: CLAUDE_CODE_COMMAND,
+            audit_store: Some(".agentfence/audit.sqlite"),
+            daemon: None,
+            notes: &[
+                "Replace the final command with the installed Claude Code binary if needed.",
+                "Use daemon approvals when the desktop app is running.",
+            ],
+        },
+        IntegrationProfile::CursorStyle => IntegrationProfileSpec {
+            slug: "cursor-style",
+            agent: "cursor-style-agent",
+            actor: "cursor-agent",
+            recommended_preset: "strict",
+            init_project: Some("cursor-agent-project"),
+            policy: None,
+            command: CURSOR_STYLE_COMMAND,
+            audit_store: Some(".agentfence/audit.sqlite"),
+            daemon: None,
+            notes: &[
+                "Wrap the agent harness or script that actually launches local commands.",
+                "Start strict, then loosen rules with explicit policy patches after observing audit logs.",
+            ],
+        },
+        IntegrationProfile::GenericMcp => IntegrationProfileSpec {
+            slug: "generic-mcp",
+            agent: "generic-mcp-client",
+            actor: "mcp-proxy",
+            recommended_preset: "developer",
+            init_project: None,
+            policy: None,
+            command: GENERIC_MCP_COMMAND,
+            audit_store: None,
+            daemon: Some("http://127.0.0.1:37421"),
+            notes: &[
+                "Use --ask-mode queue to route ask decisions to the daemon and desktop approval queue.",
+                "Denied tools, resources, and prompts are blocked before they reach the upstream MCP server.",
+            ],
+        },
+    }
+}
+
+fn integration_json(spec: IntegrationProfileSpec) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "profile": spec.slug,
+        "agent": spec.agent,
+        "actor": spec.actor,
+        "recommendedPreset": spec.recommended_preset,
+        "command": spec.command,
+        "notes": spec.notes
+    });
+
+    if let Some(project) = spec.init_project {
+        value["init"] = serde_json::json!({
+            "command": ["agentfence", "init", "--preset", spec.recommended_preset, "--project", project]
+        });
+    }
+    if let Some(policy) = spec.policy {
+        value["policy"] = serde_json::json!(policy);
+    }
+    if let Some(audit_store) = spec.audit_store {
+        value["auditStore"] = serde_json::json!(audit_store);
+    }
+    if let Some(daemon) = spec.daemon {
+        value["daemon"] = serde_json::json!(daemon);
+    }
+
+    value
+}
+
+fn print_integration_script(spec: IntegrationProfileSpec, format: IntegrationFormat) {
+    let comment = match format {
+        IntegrationFormat::PowerShell => "#",
+        IntegrationFormat::Shell | IntegrationFormat::Json => "#",
+    };
+    println!("{comment} AgentFence {} profile", spec.slug);
+    println!("{comment} Recommended preset: {}", spec.recommended_preset);
+    if let Some(project) = spec.init_project {
+        println!(
+            "{}",
+            quote_command(
+                &[
+                    "agentfence",
+                    "init",
+                    "--preset",
+                    spec.recommended_preset,
+                    "--project",
+                    project,
+                ],
+                format,
+            )
+        );
+    }
+    println!("{}", quote_command(spec.command, format));
+}
+
+fn quote_command(args: &[&str], format: IntegrationFormat) -> String {
+    args.iter()
+        .map(|arg| quote_arg(arg, format))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn quote_arg(arg: &str, format: IntegrationFormat) -> String {
+    if arg.is_empty()
+        || arg
+            .chars()
+            .any(|character| character.is_whitespace() || matches!(character, '\'' | '"'))
+    {
+        match format {
+            IntegrationFormat::PowerShell => format!("'{}'", arg.replace('\'', "''")),
+            IntegrationFormat::Json | IntegrationFormat::Shell => {
+                format!("'{}'", arg.replace('\'', "'\\''"))
+            }
+        }
+    } else {
+        arg.to_string()
     }
 }
 

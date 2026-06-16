@@ -13,6 +13,15 @@ agentfence run --actor claude-code -- claude
 
 The `--actor` value selects the actor recorded in audit logs and can be matched by policy.
 
+You can discover built-in wrapper profiles from the CLI:
+
+```bash
+agentfence integrations list
+agentfence integrations show codex --format shell
+agentfence integrations show claude-code --format powershell
+agentfence integrations show generic-mcp --format json
+```
+
 ## Codex
 
 Recommended profile:
