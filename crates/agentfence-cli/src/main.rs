@@ -361,6 +361,8 @@ enum PolicyReviewPresetCommands {
         yes: bool,
         #[arg(long)]
         require_signature: bool,
+        #[arg(long = "trusted-key")]
+        trusted_keys: Vec<String>,
     },
     Sign {
         input: PathBuf,
@@ -373,6 +375,8 @@ enum PolicyReviewPresetCommands {
         input: PathBuf,
         #[arg(long)]
         require_signature: bool,
+        #[arg(long = "trusted-key")]
+        trusted_keys: Vec<String>,
     },
 }
 
@@ -1777,12 +1781,14 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
             path,
             yes,
             require_signature,
+            trusted_keys,
         } => {
             let raw = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read review preset {}", input.display()))?;
             let bundle: serde_json::Value = serde_json::from_str(&raw)
                 .with_context(|| format!("failed to parse review preset {}", input.display()))?;
-            let verification = verify_review_preset_bundle(&bundle, require_signature)?;
+            let verification =
+                verify_review_preset_bundle(&bundle, require_signature, &trusted_keys)?;
             if !verification
                 .get("valid")
                 .and_then(serde_json::Value::as_bool)
@@ -1836,12 +1842,14 @@ fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<E
         PolicyReviewPresetCommands::Verify {
             input,
             require_signature,
+            trusted_keys,
         } => {
             let raw = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read review preset {}", input.display()))?;
             let bundle: serde_json::Value = serde_json::from_str(&raw)
                 .with_context(|| format!("failed to parse review preset {}", input.display()))?;
-            let verification = verify_review_preset_bundle(&bundle, require_signature)?;
+            let verification =
+                verify_review_preset_bundle(&bundle, require_signature, &trusted_keys)?;
             println!("{}", serde_json::to_string_pretty(&verification)?);
             if verification
                 .get("valid")
@@ -1975,6 +1983,7 @@ fn sign_review_preset_bundle(
 fn verify_review_preset_bundle(
     bundle: &serde_json::Value,
     require_signature: bool,
+    trusted_keys: &[String],
 ) -> Result<serde_json::Value> {
     proposal_from_review_preset_bundle(bundle)?;
     let expected_digest = bundle
@@ -1988,22 +1997,28 @@ fn verify_review_preset_bundle(
         bail!("review preset signature is required");
     }
 
-    let (signature_valid, signature_error) = match signature {
+    let (signature_valid, signature_trusted, signature_error) = match signature {
         Some(signature) => {
             let signature: PolicyBundleSignature = serde_json::from_value(signature.clone())
                 .context("failed to parse review preset signature")?;
-            match verify_artifact_digest_signature(
+            let trusted = trusted_keys.is_empty()
+                || trusted_keys
+                    .iter()
+                    .any(|trusted_key| trusted_key == &signature.public_key);
+            let (valid, error) = match verify_artifact_digest_signature(
                 expected_digest,
                 &signature,
                 REVIEW_PRESET_SIGNATURE_DOMAIN,
             ) {
                 Ok(valid) => (Some(valid), None),
                 Err(error) => (Some(false), Some(error.to_string())),
-            }
+            };
+            (valid, Some(trusted), error)
         }
-        None => (None, None),
+        None => (None, None, None),
     };
-    let valid = digest_valid && signature_valid.unwrap_or(true);
+    let valid =
+        digest_valid && signature_valid.unwrap_or(true) && signature_trusted.unwrap_or(true);
 
     Ok(serde_json::json!({
         "valid": valid,
@@ -2012,6 +2027,8 @@ fn verify_review_preset_bundle(
         "actualDigest": actual_digest,
         "signaturePresent": signature.is_some(),
         "signatureValid": signature_valid,
+        "signatureTrusted": signature_trusted,
+        "trustedKeyCount": trusted_keys.len(),
         "signatureError": signature_error
     }))
 }
@@ -4505,19 +4522,29 @@ mod tests {
         let mut bundle = policy_review_preset_bundle(PolicyReviewPreset::ReleaseHardening);
         attach_review_preset_digest(&mut bundle).expect("digest");
 
-        let verification = verify_review_preset_bundle(&bundle, false).expect("verify");
+        let verification = verify_review_preset_bundle(&bundle, false, &[]).expect("verify");
         assert_eq!(verification["valid"], true);
         assert_eq!(verification["signaturePresent"], false);
 
         let keypair = generate_policy_bundle_keypair();
         sign_review_preset_bundle(&mut bundle, &keypair).expect("sign");
-        let verification = verify_review_preset_bundle(&bundle, true).expect("verify signed");
+        let verification =
+            verify_review_preset_bundle(&bundle, true, std::slice::from_ref(&keypair.public_key))
+                .expect("verify signed");
         assert_eq!(verification["valid"], true);
         assert_eq!(verification["signaturePresent"], true);
         assert_eq!(verification["signatureValid"], true);
+        assert_eq!(verification["signatureTrusted"], true);
+
+        let untrusted =
+            verify_review_preset_bundle(&bundle, true, &["not-a-public-key".to_string()])
+                .expect("verify untrusted");
+        assert_eq!(untrusted["valid"], false);
+        assert_eq!(untrusted["signatureTrusted"], false);
 
         bundle["title"] = serde_json::json!("tampered");
-        let verification = verify_review_preset_bundle(&bundle, false).expect("verify tampered");
+        let verification =
+            verify_review_preset_bundle(&bundle, false, &[]).expect("verify tampered");
         assert_eq!(verification["valid"], false);
         assert_eq!(verification["digestValid"], false);
     }

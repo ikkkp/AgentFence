@@ -306,7 +306,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 
 - Keep CLI, daemon, desktop, and website verification green in CI.
 - Add release installer packaging around the wrapper PATH registration flow.
-- Add trust policy for accepted review preset signing keys.
+- Add managed trust stores for accepted review preset signing keys.
 - Explore deeper filtering for open-ended non-JSON MCP streams.
 - Explore full PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.

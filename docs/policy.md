@@ -211,7 +211,8 @@ agentfence policy review-preset verify release-hardening.review.json
 agentfence policy bundle keygen --output bundle-key.json
 agentfence policy review-preset sign release-hardening.review.json --key bundle-key.json
 agentfence policy review-preset import release-hardening.review.json --yes
-agentfence policy review-preset import release-hardening.review.json --yes --require-signature
+agentfence policy review-preset verify release-hardening.review.json --require-signature --trusted-key <public-key>
+agentfence policy review-preset import release-hardening.review.json --yes --require-signature --trusted-key <public-key>
 ```
 
 Included presets:
@@ -220,7 +221,7 @@ Included presets:
 - `release-hardening`: production deploy denial, strict unknown-network handling, and gated GitHub writes.
 - `readonly-mcp`: read-oriented MCP defaults with strict unknown-network handling.
 
-Exported review presets are JSON artifacts containing metadata, a digest, and a standard policy patch proposal. Teams can review them in version control before importing them into a project policy. Use `sign` and `--require-signature` when a team wants Ed25519 verification before import.
+Exported review presets are JSON artifacts containing metadata, a digest, and a standard policy patch proposal. Teams can review them in version control before importing them into a project policy. Use `sign`, `--require-signature`, and one or more `--trusted-key` values when a team wants Ed25519 verification against accepted public keys before import.
 
 ## Audit-Driven Suggestions
 

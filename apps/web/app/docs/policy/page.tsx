@@ -50,7 +50,7 @@ agentfence policy review-preset apply release-hardening --yes
 agentfence policy review-preset export release-hardening --output release-hardening.review.json
 agentfence policy review-preset verify release-hardening.review.json
 agentfence policy review-preset sign release-hardening.review.json --key bundle-key.json
-agentfence policy review-preset import release-hardening.review.json --yes --require-signature`}</pre>
+agentfence policy review-preset import release-hardening.review.json --yes --require-signature --trusted-key <public-key>`}</pre>
       <p>
         Audit-driven suggestions scan repeated approved ask decisions and emit narrower JSON Patch proposals.
       </p>
