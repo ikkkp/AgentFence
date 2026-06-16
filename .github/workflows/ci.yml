@@ -15,6 +15,28 @@ jobs:
         run: cargo fmt --check
       - name: Test
         run: cargo test
+      - name: Packaging scripts
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content -Raw packaging/install.ps1)) | Out-Null
+          [scriptblock]::Create((Get-Content -Raw packaging/release-manifest.ps1)) | Out-Null
+          $dist = Join-Path $env:RUNNER_TEMP "agentfence-manifest-smoke"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $artifact = Join-Path $dist "agentfence-smoke.zip"
+          Set-Content -Path $artifact -Value "agentfence" -Encoding UTF8
+          $output = Join-Path $dist "agentfence-smoke.checksums.json"
+          & ./packaging/release-manifest.ps1 `
+            -ArtifactPath $artifact `
+            -ArtifactDir $dist `
+            -Output $output `
+            -Version "ci" `
+            -Repository "${{ github.repository }}" `
+            -Commit "${{ github.sha }}" | Out-Null
+          $manifest = Get-Content -Raw $output | ConvertFrom-Json
+          $expected = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($manifest.kind -ne "agentfence.releaseManifest") { throw "wrong manifest kind" }
+          if ($manifest.artifacts.Count -ne 1) { throw "wrong artifact count" }
+          if ($manifest.artifacts[0].sha256 -ne $expected) { throw "wrong manifest checksum" }
 
   web:
     runs-on: windows-latest
@@ -32,4 +54,3 @@ jobs:
         run: pnpm typecheck
       - name: Build
         run: pnpm build
-
