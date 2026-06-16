@@ -259,6 +259,10 @@ enum PolicyCommands {
         #[command(subcommand)]
         command: PolicyLibraryCommands,
     },
+    ReviewPreset {
+        #[command(subcommand)]
+        command: PolicyReviewPresetCommands,
+    },
     Bundle {
         #[command(subcommand)]
         command: PolicyBundleCommands,
@@ -326,6 +330,36 @@ struct PolicyRulePackSpec {
     slug: &'static str,
     title: &'static str,
     description: &'static str,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyReviewPresetCommands {
+    List,
+    Show {
+        preset: PolicyReviewPreset,
+    },
+    Apply {
+        preset: PolicyReviewPreset,
+        #[arg(long, default_value = "agentfence.policy.json")]
+        path: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PolicyReviewPreset {
+    CodexBalanced,
+    ReleaseHardening,
+    ReadonlyMcp,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PolicyReviewPresetSpec {
+    slug: &'static str,
+    title: &'static str,
+    description: &'static str,
+    packs: &'static [PolicyRulePack],
 }
 
 #[derive(Debug, Subcommand)]
@@ -1269,6 +1303,7 @@ fn policy_command(command: PolicyCommands) -> Result<ExitCode> {
         }
         PolicyCommands::Template { command } => policy_template_command(command),
         PolicyCommands::Library { command } => policy_library_command(command),
+        PolicyCommands::ReviewPreset { command } => policy_review_preset_command(command),
         PolicyCommands::Bundle { command } => policy_bundle_command(command),
     }
 }
@@ -1627,6 +1662,136 @@ fn policy_rule_pack_proposal(pack: PolicyRulePack) -> PolicyPatchProposal {
 
     PolicyPatchProposal {
         summary: format!("Apply AgentFence policy rule pack `{}`.", spec.slug),
+        operations,
+    }
+}
+
+fn policy_review_preset_command(command: PolicyReviewPresetCommands) -> Result<ExitCode> {
+    match command {
+        PolicyReviewPresetCommands::List => {
+            for preset in policy_review_presets() {
+                let spec = policy_review_preset_spec(preset);
+                let packs = spec
+                    .packs
+                    .iter()
+                    .map(|pack| policy_rule_pack_spec(*pack).slug)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!("{:<20} packs={:<48} {}", spec.slug, packs, spec.description);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetCommands::Show { preset } => {
+            let spec = policy_review_preset_spec(preset);
+            let proposal = policy_review_preset_proposal(preset);
+            let packs = spec
+                .packs
+                .iter()
+                .map(|pack| policy_rule_pack_spec(*pack).slug)
+                .collect::<Vec<_>>();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "preset": spec.slug,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "packs": packs,
+                    "proposal": proposal
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetCommands::Apply { preset, path, yes } => {
+            let spec = policy_review_preset_spec(preset);
+            let proposal = policy_review_preset_proposal(preset);
+            println!("{}", serde_json::to_string_pretty(&proposal)?);
+            if !yes
+                && !prompt_for_approval(
+                    "apply policy review preset",
+                    "policy changes require confirmation",
+                )?
+            {
+                println!("policy review preset was not applied");
+                return Ok(ExitCode::from(13));
+            }
+
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read policy {}", path.display()))?;
+            let mut value: serde_json::Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to parse policy {}", path.display()))?;
+            apply_policy_patch(&mut value, &proposal.operations)?;
+            fs::write(&path, serde_json::to_string_pretty(&value)?)
+                .with_context(|| format!("failed to write policy {}", path.display()))?;
+            println!("applied {} to {}", spec.slug, path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn policy_review_presets() -> [PolicyReviewPreset; 3] {
+    [
+        PolicyReviewPreset::CodexBalanced,
+        PolicyReviewPreset::ReleaseHardening,
+        PolicyReviewPreset::ReadonlyMcp,
+    ]
+}
+
+const CODEX_BALANCED_PACKS: [PolicyRulePack; 3] = [
+    PolicyRulePack::LocalTests,
+    PolicyRulePack::DependencyInstalls,
+    PolicyRulePack::GithubReadonlyMcp,
+];
+const RELEASE_HARDENING_PACKS: [PolicyRulePack; 3] = [
+    PolicyRulePack::ReleaseGuard,
+    PolicyRulePack::NetworkStrict,
+    PolicyRulePack::GithubReadonlyMcp,
+];
+const READONLY_MCP_PACKS: [PolicyRulePack; 2] = [
+    PolicyRulePack::GithubReadonlyMcp,
+    PolicyRulePack::NetworkStrict,
+];
+
+fn policy_review_preset_spec(preset: PolicyReviewPreset) -> PolicyReviewPresetSpec {
+    match preset {
+        PolicyReviewPreset::CodexBalanced => PolicyReviewPresetSpec {
+            slug: "codex-balanced",
+            title: "Codex Balanced",
+            description: "Allow local verification while keeping installs and GitHub writes gated.",
+            packs: &CODEX_BALANCED_PACKS,
+        },
+        PolicyReviewPreset::ReleaseHardening => PolicyReviewPresetSpec {
+            slug: "release-hardening",
+            title: "Release Hardening",
+            description: "Deny deploy paths, lock unknown network domains, and keep GitHub writes gated.",
+            packs: &RELEASE_HARDENING_PACKS,
+        },
+        PolicyReviewPreset::ReadonlyMcp => PolicyReviewPresetSpec {
+            slug: "readonly-mcp",
+            title: "Read-Only MCP",
+            description: "Bias MCP and network access toward read-only review workflows.",
+            packs: &READONLY_MCP_PACKS,
+        },
+    }
+}
+
+fn policy_review_preset_proposal(preset: PolicyReviewPreset) -> PolicyPatchProposal {
+    let spec = policy_review_preset_spec(preset);
+    let mut operations = Vec::new();
+    for pack in spec.packs {
+        operations.extend(policy_rule_pack_proposal(*pack).operations);
+    }
+    let packs = spec
+        .packs
+        .iter()
+        .map(|pack| policy_rule_pack_spec(*pack).slug)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    PolicyPatchProposal {
+        summary: format!(
+            "Apply AgentFence policy review preset `{}` with rule packs: {}.",
+            spec.slug, packs
+        ),
         operations,
     }
 }
@@ -4009,6 +4174,48 @@ mod tests {
                 .as_array()
                 .expect("allow domains")
                 .contains(&serde_json::json!("github.com"))
+        );
+    }
+
+    #[test]
+    fn review_presets_combine_rule_packs() {
+        let spec = policy_review_preset_spec(PolicyReviewPreset::CodexBalanced);
+        let proposal = policy_review_preset_proposal(PolicyReviewPreset::CodexBalanced);
+
+        assert_eq!(spec.packs.len(), 3);
+        assert!(proposal.summary.contains("codex-balanced"));
+        assert!(
+            proposal
+                .operations
+                .iter()
+                .any(|operation| operation.path == "/mcp/servers/github")
+        );
+        assert!(
+            proposal
+                .operations
+                .iter()
+                .any(|operation| operation.value["id"] == "allow-local-tests")
+        );
+    }
+
+    #[test]
+    fn release_hardening_preset_applies_multiple_guardrails() {
+        let mut value = serde_json::to_value(Policy::default()).expect("policy json");
+        let proposal = policy_review_preset_proposal(PolicyReviewPreset::ReleaseHardening);
+
+        apply_policy_patch(&mut value, &proposal.operations).expect("patch");
+
+        assert_eq!(value["network"]["defaultDecision"], "deny");
+        assert!(
+            value["shell"]["rules"]
+                .as_array()
+                .expect("rules")
+                .iter()
+                .any(|rule| rule["id"] == "deny-production-deploy")
+        );
+        assert_eq!(
+            value["mcp"]["servers"]["github"]["tools"]["merge_pull_request"],
+            "deny"
         );
     }
 }

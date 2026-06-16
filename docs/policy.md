@@ -198,6 +198,22 @@ Included packs:
 - `github-readonly-mcp`: allow common GitHub read tools, ask for PR creation, and deny merge/release tools.
 - `network-strict`: deny unknown network domains while keeping common registries explicit.
 
+## Review Presets
+
+Review presets combine multiple rule packs into one reviewable proposal for common agent profiles.
+
+```bash
+agentfence policy review-preset list
+agentfence policy review-preset show codex-balanced
+agentfence policy review-preset apply release-hardening --yes
+```
+
+Included presets:
+
+- `codex-balanced`: local tests, dependency install review, and GitHub read-oriented MCP defaults.
+- `release-hardening`: production deploy denial, strict unknown-network handling, and gated GitHub writes.
+- `readonly-mcp`: read-oriented MCP defaults with strict unknown-network handling.
+
 ## Audit-Driven Suggestions
 
 AgentFence can scan recent audit events and suggest narrower policy rules for actions that were repeatedly approved after an `ask` decision. Suggestions are emitted as JSON Patch proposals and are not applied automatically.

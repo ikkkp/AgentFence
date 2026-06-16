@@ -40,6 +40,13 @@ agentfence skill check --name code-review`}</pre>
       <pre>{`agentfence policy library list
 agentfence policy library show local-tests
 agentfence policy library apply release-guard --yes`}</pre>
+      <h2>Review presets</h2>
+      <p>
+        Review presets combine multiple rule packs into one JSON Patch proposal.
+      </p>
+      <pre>{`agentfence policy review-preset list
+agentfence policy review-preset show codex-balanced
+agentfence policy review-preset apply release-hardening --yes`}</pre>
       <p>
         Audit-driven suggestions scan repeated approved ask decisions and emit narrower JSON Patch proposals.
       </p>
