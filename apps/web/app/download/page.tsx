@@ -13,7 +13,8 @@ cargo run --bin agentfence -- policy validate agentfence.policy.json`}</pre>
       <h2>Release archives</h2>
       <p>
         CLI archives include `agentfence`, `agentfenced`, the default policy, and installer scripts
-        that copy binaries into a user bin directory and register it on PATH.
+        that copy binaries into a user bin directory and register it on PATH. Each CLI archive is
+        published with a `.checksums.json` manifest containing its SHA256 digest.
       </p>
       <pre>{`# Windows
 .\\install.ps1

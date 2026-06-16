@@ -51,9 +51,18 @@ The workflow builds:
 - `agentfence-windows-x64.zip`
 - `agentfence-macos-arm64.zip`
 - `agentfence-linux-x64.zip`
+- `agentfence-<platform>.checksums.json` SHA256 manifests for each CLI archive.
 - `agentfence-desktop-windows-x64`
 - `agentfence-desktop-macos-arm64`
 - `agentfence-desktop-linux-x64`
+
+Generate a local checksum manifest for staged artifacts:
+
+```powershell
+.\packaging\release-manifest.ps1 -ArtifactPath .\dist\agentfence-windows-x64.zip -Output .\dist\agentfence-windows-x64.checksums.json
+```
+
+Each manifest records the release version, repository, commit, artifact size, and SHA256 digest. These manifests are not a replacement for future certificate-backed signing or notarization, but they give users a deterministic checksum to compare after download.
 
 After downloading a CLI archive, users can install the binaries onto PATH:
 

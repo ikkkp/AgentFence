@@ -39,10 +39,22 @@ jobs:
           Copy-Item "packaging/install.ps1" "$stage/"
           Copy-Item "packaging/install.sh" "$stage/"
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/agentfence-${{ matrix.name }}.zip" -Force
+      - name: Generate checksum manifest
+        shell: pwsh
+        run: |
+          & ./packaging/release-manifest.ps1 `
+            -ArtifactPath "dist/agentfence-${{ matrix.name }}.zip" `
+            -ArtifactDir "dist" `
+            -Output "dist/agentfence-${{ matrix.name }}.checksums.json" `
+            -Version "${{ github.ref_name }}" `
+            -Repository "${{ github.repository }}" `
+            -Commit "${{ github.sha }}"
       - uses: actions/upload-artifact@v4
         with:
           name: agentfence-${{ matrix.name }}
-          path: dist/agentfence-${{ matrix.name }}.zip
+          path: |
+            dist/agentfence-${{ matrix.name }}.zip
+            dist/agentfence-${{ matrix.name }}.checksums.json
           if-no-files-found: error
 
   desktop-bundles:
