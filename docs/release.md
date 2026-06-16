@@ -52,7 +52,7 @@ The workflow builds:
 
 For v0.1.x, attach the generated artifacts to a GitHub release and include the current security boundary:
 
-- Shell commands are enforced when launched through `agentfence run`.
+- Shell commands are enforced when launched through `agentfence run` or entered in `agentfence shell`.
 - URL-like and common Git/SSH remotes found in guarded shell commands are checked against network policy before execution.
 - MCP stdio calls are enforced through `agentfence mcp proxy`; non-streaming HTTP JSON-RPC calls are enforced through `agentfence mcp http-proxy`.
 - Filesystem, network, skill, and MCP checks are available through the daemon API.

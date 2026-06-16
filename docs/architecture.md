@@ -94,14 +94,15 @@ Policy bundles are portable team-policy artifacts. They include the policy body,
 
 ## Current Enforcement Boundary
 
-The current implementation enforces shell commands launched through `agentfence run`. This is useful for explicit wrapper flows:
+The current implementation enforces shell commands launched through `agentfence run` and commands typed into the line-oriented guarded shell `agentfence shell`. This is useful for explicit wrapper flows and for interactive local sessions where every entered command should be checked:
 
 ```bash
 agentfence run -- codex
 agentfence run -- claude
 agentfence run -- npm test
+agentfence shell --actor codex
 ```
 
 The initial MCP stdio proxy is available through `agentfence mcp proxy`, and a scoped HTTP JSON-RPC proxy is available through `agentfence mcp http-proxy`. They inspect client-to-server JSON-RPC calls for `tools/call`, `resources/read`, and `prompts/get`, then block denied or rate-limited requests before they reach the upstream server. They also track `tools/list`, `resources/list`, and `prompts/list` requests so denied entries can be filtered out of upstream list responses.
 
-Guarded shell commands also extract URL-like arguments and common Git/SSH remotes, then evaluate those domains against `network` policy before execution. Future milestones should add deeper pseudo-shell integration, MCP SSE/streaming support, external tool broker adapters, and optional OS-level or proxy-level network/filesystem controls.
+Guarded shell commands also extract URL-like arguments and common Git/SSH remotes, then evaluate those domains against `network` policy before execution. Future milestones should add full PTY interception, MCP SSE/streaming support, external tool broker adapters, and optional OS-level or proxy-level network/filesystem controls.

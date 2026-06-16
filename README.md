@@ -109,6 +109,7 @@ agentfence policy bundle import signed.bundle.json --yes --require-signature
 agentfence check -- git status
 agentfence simulate shell -- git status https://transfer.sh/file
 agentfence run -- git status --short
+agentfence shell --actor codex
 agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude
 agentfence integrations list
@@ -129,7 +130,7 @@ agentfence mcp http-proxy --server github --upstream http://127.0.0.1:3000/mcp
 
 ## Security Model
 
-AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC calls through `agentfence mcp http-proxy`. Deeper shell interception, MCP SSE/streaming transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
+AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, provides a line-oriented guarded shell through `agentfence shell`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC calls through `agentfence mcp http-proxy`. Full PTY interception, MCP SSE/streaming transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
 
 Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 

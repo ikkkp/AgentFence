@@ -25,6 +25,7 @@ cargo run --bin agentfence -- policy bundle export --output team.bundle.json
 cargo run --bin agentfence -- policy bundle sign team.bundle.json --key bundle-key.json
 cargo run --bin agentfence -- audit export --format csv --limit 100
 cargo run --bin agentfence -- approvals list
+cargo run --bin agentfence -- shell --actor codex
 cargo run --bin agentfence -- filesystem check --operation read --path ~/.ssh/id_rsa
 cargo run --bin agentfence -- network check --domain github.com
 cargo run --bin agentfence -- skill check --name code-review

@@ -33,6 +33,7 @@ struct Cli {
 enum Commands {
     Init(InitArgs),
     Run(RunArgs),
+    Shell(ShellArgs),
     Check(CheckArgs),
     Logs(LogsArgs),
     Audit {
@@ -105,6 +106,18 @@ struct RunArgs {
     audit: Option<PathBuf>,
     #[arg(last = true, required = true)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct ShellArgs {
+    #[arg(long, default_value = "codex")]
+    actor: String,
+    #[arg(long)]
+    policy: Option<PathBuf>,
+    #[arg(long)]
+    audit: Option<PathBuf>,
+    #[arg(long, default_value = "agentfence> ")]
+    prompt: String,
 }
 
 #[derive(Debug, Args)]
@@ -449,6 +462,7 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         Commands::Init(args) => init(args),
         Commands::Run(args) => run_guarded(args),
+        Commands::Shell(args) => guarded_shell(args),
         Commands::Check(args) => check(args),
         Commands::Logs(args) => logs(args),
         Commands::Audit { command } => audit_command(command),
@@ -535,19 +549,62 @@ fn check(args: CheckArgs) -> Result<ExitCode> {
 }
 
 fn run_guarded(args: RunArgs) -> Result<ExitCode> {
+    run_guarded_command(
+        &args.actor,
+        args.policy.as_deref(),
+        args.audit.as_deref(),
+        &args.command,
+    )
+}
+
+fn run_guarded_command(
+    actor: &str,
+    policy_path: Option<&Path>,
+    audit_path: Option<&Path>,
+    command_args: &[String],
+) -> Result<ExitCode> {
+    let outcome = guard_shell_command(actor, policy_path, audit_path, command_args)?;
+    if !outcome.allowed {
+        println!("denied: {}", outcome.command);
+        return Ok(ExitCode::from(13));
+    }
+
+    let status = Command::new(&command_args[0])
+        .args(&command_args[1..])
+        .status()
+        .with_context(|| format!("failed to execute {}", command_args[0]))?;
+
+    Ok(ExitCode::from(status.code().unwrap_or(1) as u8))
+}
+
+struct GuardedShellOutcome {
+    allowed: bool,
+    command: String,
+}
+
+fn guard_shell_command(
+    actor: &str,
+    policy_path: Option<&Path>,
+    audit_path: Option<&Path>,
+    command_args: &[String],
+) -> Result<GuardedShellOutcome> {
+    if command_args.is_empty() {
+        bail!("command is empty");
+    }
+
     let cwd = env::current_dir().context("failed to read current directory")?;
-    let policy_path = resolve_policy_path(args.policy.as_deref(), &cwd)?;
+    let policy_path = resolve_policy_path(policy_path, &cwd)?;
     let policy = load_policy(&policy_path)?;
-    let command = classify_command(&args.command);
+    let command = classify_command(command_args);
     let request = ShellRequest {
-        actor: args.actor.clone(),
+        actor: actor.to_string(),
         command: command.command_line.clone(),
-        args: args.command.clone(),
+        args: command_args.to_vec(),
         cwd: cwd.display().to_string(),
         risk: command.risk,
     };
     let result = evaluate_shell(&policy, &request);
-    let network_decisions = extract_network_domains(&args.command)
+    let network_decisions = extract_network_domains(command_args)
         .into_iter()
         .map(|domain| {
             let decision = evaluate_network(
@@ -596,7 +653,7 @@ fn run_guarded(args: RunArgs) -> Result<ExitCode> {
         .collect::<Vec<_>>();
 
     let mut event = AuditEvent::new(
-        args.actor,
+        actor,
         "shell.exec",
         request.command.clone(),
         if allowed { "allow" } else { "deny" },
@@ -616,23 +673,162 @@ fn run_guarded(args: RunArgs) -> Result<ExitCode> {
     });
 
     if policy.audit.enabled {
-        let audit_path = args
-            .audit
+        let audit_path = audit_path
+            .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(&policy.audit.store));
         AuditStore::open(audit_path)?.append(&event)?;
     }
 
-    if !allowed {
-        println!("denied: {}", request.command);
-        return Ok(ExitCode::from(13));
+    Ok(GuardedShellOutcome {
+        allowed,
+        command: request.command,
+    })
+}
+
+fn guarded_shell(args: ShellArgs) -> Result<ExitCode> {
+    let stdin = io::stdin();
+    let mut input = String::new();
+    println!("AgentFence guarded shell. Type exit or quit to leave.");
+
+    loop {
+        print!("{}", args.prompt);
+        io::stdout().flush().context("failed to flush prompt")?;
+        input.clear();
+        if stdin
+            .read_line(&mut input)
+            .context("failed to read shell input")?
+            == 0
+        {
+            println!();
+            break;
+        }
+
+        let line = input.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if matches!(line, "exit" | "quit") {
+            break;
+        }
+
+        let command = match parse_shell_line(line) {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("parse error: {error}");
+                continue;
+            }
+        };
+        if command.is_empty() {
+            continue;
+        }
+
+        let outcome = guard_shell_command(
+            &args.actor,
+            args.policy.as_deref(),
+            args.audit.as_deref(),
+            &command,
+        )?;
+        if !outcome.allowed {
+            println!("denied: {}", outcome.command);
+            continue;
+        }
+
+        if is_cd_command(&command) {
+            if let Err(error) = change_directory(&command) {
+                eprintln!("cd: {error}");
+            }
+            continue;
+        }
+
+        let status = Command::new(&command[0])
+            .args(&command[1..])
+            .status()
+            .with_context(|| format!("failed to execute {}", command[0]))?;
+        if !status.success() {
+            eprintln!(
+                "command exited with {}",
+                status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown status".to_string())
+            );
+        }
     }
 
-    let status = Command::new(&args.command[0])
-        .args(&args.command[1..])
-        .status()
-        .with_context(|| format!("failed to execute {}", args.command[0]))?;
+    Ok(ExitCode::SUCCESS)
+}
 
-    Ok(ExitCode::from(status.code().unwrap_or(1) as u8))
+fn parse_shell_line(input: &str) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for character in input.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+
+        if let Some(quote_character) = quote {
+            if character == quote_character {
+                quote = None;
+            } else {
+                current.push(character);
+            }
+            continue;
+        }
+
+        if character == '\'' || character == '"' {
+            quote = Some(character);
+        } else if character.is_whitespace() {
+            if !current.is_empty() {
+                args.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(character);
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if quote.is_some() {
+        bail!("unterminated quote");
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    Ok(args)
+}
+
+fn is_cd_command(command: &[String]) -> bool {
+    command
+        .first()
+        .is_some_and(|value| value.eq_ignore_ascii_case("cd"))
+}
+
+fn change_directory(command: &[String]) -> Result<()> {
+    let target = if let Some(path) = command.get(1) {
+        PathBuf::from(path)
+    } else {
+        home_dir().context("failed to find home directory")?
+    };
+    env::set_current_dir(&target)
+        .with_context(|| format!("failed to change directory to {}", target.display()))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 fn logs(args: LogsArgs) -> Result<ExitCode> {
@@ -2152,5 +2348,24 @@ mod tests {
             1
         );
         assert_eq!(escape_markdown_table("a|b\nc"), "a\\|b c");
+    }
+
+    #[test]
+    fn parses_shell_lines_with_quotes_and_escapes() {
+        assert_eq!(
+            parse_shell_line("git commit -m \"hello world\"").expect("parse"),
+            vec!["git", "commit", "-m", "hello world"]
+        );
+        assert_eq!(
+            parse_shell_line("echo one\\ two 'three four'").expect("parse"),
+            vec!["echo", "one two", "three four"]
+        );
+        assert!(parse_shell_line("echo \"unterminated").is_err());
+    }
+
+    #[test]
+    fn detects_cd_command_case_insensitively() {
+        assert!(is_cd_command(&["CD".to_string(), "..".to_string()]));
+        assert!(!is_cd_command(&["pwd".to_string()]));
     }
 }

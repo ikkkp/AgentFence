@@ -18,7 +18,7 @@ AgentFence should become the local control plane for AI agent execution:
 As of the first repository implementation slice, AgentFence has working foundations for:
 
 - Milestone 0 foundation: Cargo workspace, pnpm workspace, policy schema, docs, CI, desktop app, and website.
-- Milestone 1 shell permission MVP: `agentfence run`, command risk classification, allow/deny/ask decisions, CLI approval prompt, policy discovery, and SQLite audit logs.
+- Milestone 1 shell permission MVP: `agentfence run`, line-oriented `agentfence shell`, command risk classification, allow/deny/ask decisions, CLI approval prompt, policy discovery, and SQLite audit logs.
 - Milestone 2 desktop MVP: Tauri control plane with daemon health, live approvals, policy assistant preview, audit/export surfaces, MCP and skill controls.
 - Milestone 3 MCP proxy: stdio and scoped HTTP JSON-RPC proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering, daemon-backed ask mode, rate limits, and audit events.
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
@@ -27,7 +27,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
 - Milestone 8 foundations: signed policy bundles, verification, import, audit export, and local audit reports.
 
-Remaining hardening work is concentrated around deeper shell interception, OS-level filesystem controls, full network proxying, MCP SSE/streaming transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
+Remaining hardening work is concentrated around full PTY shell interception, OS-level filesystem controls, full network proxying, MCP SSE/streaming transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
 
 ## Guiding Principles
 
@@ -309,12 +309,12 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 - Add richer desktop policy editing with schema validation and diffs.
 - Add desktop notifications for approval requests.
 - Add MCP SSE and streaming HTTP transport support.
-- Explore pseudo-shell or PTY integration for agents that launch nested commands.
+- Explore full PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.
 
 ## Open Design Questions
 
-- Should the shell controller start as a wrapper-only model or include a deeper pseudo-shell?
+- How should the current wrapper plus line-oriented shell evolve into full PTY interception?
 - Should the policy engine use a custom matcher first, or adopt OPA/Rego later?
 - How much network control is feasible without requiring a full proxy/VPN layer?
 - Which MCP transports should be prioritized first: stdio, HTTP, or both?
