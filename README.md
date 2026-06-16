@@ -107,6 +107,7 @@ agentfence policy bundle export --output signed.bundle.json --key bundle-key.jso
 agentfence policy bundle verify team.bundle.json
 agentfence policy bundle import signed.bundle.json --yes --require-signature
 agentfence check -- git status
+agentfence simulate shell -- git status https://transfer.sh/file
 agentfence run -- git status --short
 agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude

@@ -77,6 +77,25 @@ struct NetworkDecisionOutput {
     approval: Option<ApprovalRequest>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellSimulationOutput {
+    request: ShellRequest,
+    decision: agentfence_policy::DecisionResult,
+    shell_decision: agentfence_policy::DecisionResult,
+    summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    network_decisions: Vec<NetworkSimulationDecision>,
+    explanation: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkSimulationDecision {
+    domain: String,
+    decision: agentfence_policy::DecisionResult,
+}
+
 #[derive(Debug, Deserialize)]
 struct AuditQuery {
     #[serde(default = "default_limit")]
@@ -148,6 +167,7 @@ async fn main() -> Result<()> {
         .route("/network/check", post(network_check))
         .route("/skill/check", post(skill_check))
         .route("/mcp/check", post(mcp_check))
+        .route("/simulate/shell", post(simulate_shell))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -337,6 +357,50 @@ async fn shell_check(
         summary: command.summary,
         network_decisions,
         approval,
+    }))
+}
+
+async fn simulate_shell(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<ShellCheckInput>,
+) -> Result<Json<ShellSimulationOutput>, ApiError> {
+    let policy = load_policy(&state.policy_path)?;
+    let cwd = input.cwd.unwrap_or_else(|| {
+        env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+    });
+    let command = classify_command(&input.command);
+    let request = ShellRequest {
+        actor: input.actor,
+        command: command.command_line,
+        args: input.command,
+        cwd,
+        risk: command.risk,
+    };
+    let shell_decision = evaluate_shell(&policy, &request);
+    let network_decisions = extract_network_domains(&request.args)
+        .into_iter()
+        .map(|domain| {
+            let decision = evaluate_network(
+                &policy,
+                &NetworkRequest {
+                    domain: domain.clone(),
+                },
+            );
+            NetworkSimulationDecision { domain, decision }
+        })
+        .collect::<Vec<_>>();
+    let decision = effective_simulation_decision(&shell_decision, &network_decisions);
+    let explanation = explain_simulation(&shell_decision, &network_decisions, &decision);
+
+    Ok(Json(ShellSimulationOutput {
+        request,
+        decision,
+        shell_decision,
+        summary: command.summary,
+        network_decisions,
+        explanation,
     }))
 }
 
@@ -562,6 +626,60 @@ fn effective_shell_decision(
     }
 
     shell.clone()
+}
+
+fn effective_simulation_decision(
+    shell: &DecisionResult,
+    network: &[NetworkSimulationDecision],
+) -> DecisionResult {
+    if shell.decision == Decision::Deny {
+        return shell.clone();
+    }
+
+    if let Some(output) = network
+        .iter()
+        .find(|output| output.decision.decision == Decision::Deny)
+    {
+        let mut decision = output.decision.clone();
+        decision.reason = format!("network {}: {}", output.domain, decision.reason);
+        return decision;
+    }
+
+    if shell.decision == Decision::Ask {
+        return shell.clone();
+    }
+
+    if let Some(output) = network
+        .iter()
+        .find(|output| output.decision.decision == Decision::Ask)
+    {
+        let mut decision = output.decision.clone();
+        decision.reason = format!("network {}: {}", output.domain, decision.reason);
+        return decision;
+    }
+
+    shell.clone()
+}
+
+fn explain_simulation(
+    shell: &DecisionResult,
+    network: &[NetworkSimulationDecision],
+    decision: &DecisionResult,
+) -> Vec<String> {
+    let mut explanation = vec![format!("shell {:?}: {}", shell.decision, shell.reason)];
+
+    for output in network {
+        explanation.push(format!(
+            "network {} {:?}: {}",
+            output.domain, output.decision.decision, output.decision.reason
+        ));
+    }
+
+    explanation.push(format!(
+        "effective {:?}: {}",
+        decision.decision, decision.reason
+    ));
+    explanation
 }
 
 #[derive(Debug)]

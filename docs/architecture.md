@@ -60,6 +60,7 @@ The daemon lives in `crates/agentfence-daemon`. It provides local HTTP APIs for 
 - `POST /network/check`
 - `POST /skill/check`
 - `POST /mcp/check`
+- `POST /simulate/shell`
 
 ### Audit Store
 
@@ -82,6 +83,10 @@ The public website lives in `apps/web`. It uses Next.js and contains the marketi
 ### Policy Assistant
 
 The policy assistant starts as a deterministic proposal generator in `crates/agentfence-policy`. It converts common natural-language permission requests into JSON Patch operations and intentionally does not apply them automatically.
+
+### Policy Simulator
+
+The simulator evaluates hypothetical actions without creating approval requests or writing audit events. The first implementation supports shell commands through `agentfence simulate shell -- <command>` and `POST /simulate/shell`, including effective decisions that combine shell and extracted network-domain policy.
 
 ### Policy Bundles
 

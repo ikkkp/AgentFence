@@ -173,6 +173,16 @@ agentfence policy apply --yes "deny production deploy"
 
 `policy apply` prints the proposed operations first, applies them to the policy JSON, then validates the patched policy before writing it back.
 
+## Policy Simulator
+
+Use the simulator to explain hypothetical actions without creating approval requests or audit rows:
+
+```bash
+agentfence simulate shell -- git status https://transfer.sh/file
+```
+
+The output includes the shell decision, network-domain decisions, the effective decision, and an explanation chain.
+
 ## Presets
 
 AgentFence ships with policy presets for common modes:

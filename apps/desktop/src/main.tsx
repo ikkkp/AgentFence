@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import type { ApprovalRequest, AuditEvent } from "@agentfence/types";
+import type { ApprovalRequest, AuditEvent, ShellSimulationOutput } from "@agentfence/types";
 import {
   Activity,
   Bell,
@@ -98,6 +98,9 @@ function App() {
   const [policyStatus, setPolicyStatus] = useState("Sample policy loaded");
   const [policyStatusKind, setPolicyStatusKind] = useState<"neutral" | "valid" | "invalid">("neutral");
   const [policyDirty, setPolicyDirty] = useState(false);
+  const [simulatorInput, setSimulatorInput] = useState("git status https://transfer.sh/file");
+  const [simulatorResult, setSimulatorResult] = useState<ShellSimulationOutput | null>(null);
+  const [simulatorStatus, setSimulatorStatus] = useState("Ready");
   const [bundleDigest, setBundleDigest] = useState("not loaded");
   const [bundleSignature, setBundleSignature] = useState("not checked");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
@@ -271,6 +274,33 @@ function App() {
     setNotificationPermission(permission);
   }
 
+  async function runSimulator() {
+    const command = parseCommandLine(simulatorInput);
+    if (command.length === 0) {
+      setSimulatorStatus("Enter a command to simulate");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${daemonBase}/simulate/shell`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          actor: "codex",
+          command
+        })
+      });
+      if (!response.ok) {
+        setSimulatorStatus("Simulation failed");
+        return;
+      }
+      setSimulatorResult((await response.json()) as ShellSimulationOutput);
+      setSimulatorStatus("Simulation complete");
+    } catch {
+      setSimulatorStatus("Daemon offline");
+    }
+  }
+
   async function refreshBundleDigest() {
     try {
       const response = await fetch(`${daemonBase}/policy/bundle?name=DesktopBundle`);
@@ -384,6 +414,39 @@ function App() {
             <div className={`status status-${policyStatusKind}`}>{policyStatus}</div>
           </Panel>
 
+          <Panel title="Policy Simulator" icon={<Activity size={18} />}>
+            <div className="assistant-row">
+              <input
+                value={simulatorInput}
+                onChange={(event) => setSimulatorInput(event.target.value)}
+                aria-label="Shell command to simulate"
+              />
+              <button onClick={runSimulator}>Run</button>
+            </div>
+            {simulatorResult ? (
+              <div className="simulation-result">
+                <div className="decision-row">
+                  <span>Effective</span>
+                  <strong className={`decision ${simulatorResult.decision.decision}`}>{simulatorResult.decision.decision}</strong>
+                </div>
+                <div className="decision-row">
+                  <span>Shell</span>
+                  <strong className={`decision ${simulatorResult.shellDecision.decision}`}>{simulatorResult.shellDecision.decision}</strong>
+                </div>
+                {(simulatorResult.networkDecisions ?? []).map((item) => (
+                  <div className="decision-row" key={item.domain}>
+                    <span>{item.domain}</span>
+                    <strong className={`decision ${item.decision.decision}`}>{item.decision.decision}</strong>
+                  </div>
+                ))}
+                <pre className="policy simulation-explanation">{simulatorResult.explanation.join("\n")}</pre>
+              </div>
+            ) : (
+              <div className="empty-state">No simulation run yet</div>
+            )}
+            <div className="status status-neutral">{simulatorStatus}</div>
+          </Panel>
+
           <Panel title="Audit Log" icon={<History size={18} />}>
             <table>
               <thead>
@@ -481,6 +544,19 @@ function formatAuditTime(timestamp: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function parseCommandLine(value: string) {
+  const matches = value.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  return matches.map((item) => {
+    if (
+      (item.startsWith("\"") && item.endsWith("\"")) ||
+      (item.startsWith("'") && item.endsWith("'"))
+    ) {
+      return item.slice(1, -1);
+    }
+    return item;
+  });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

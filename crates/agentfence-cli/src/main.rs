@@ -56,6 +56,10 @@ enum Commands {
         #[command(subcommand)]
         command: SkillCommands,
     },
+    Simulate {
+        #[command(subcommand)]
+        command: SimulateCommands,
+    },
     Policy {
         #[command(subcommand)]
         command: PolicyCommands,
@@ -101,6 +105,21 @@ struct RunArgs {
 
 #[derive(Debug, Args)]
 struct CheckArgs {
+    #[arg(long, default_value = "codex")]
+    actor: String,
+    #[arg(long)]
+    policy: Option<PathBuf>,
+    #[arg(last = true, required = true)]
+    command: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum SimulateCommands {
+    Shell(SimulateShellArgs),
+}
+
+#[derive(Debug, Args)]
+struct SimulateShellArgs {
     #[arg(long, default_value = "codex")]
     actor: String,
     #[arg(long)]
@@ -324,6 +343,7 @@ fn run() -> Result<ExitCode> {
         Commands::Filesystem { command } => filesystem_command(command),
         Commands::Network { command } => network_command(command),
         Commands::Skill { command } => skill_command(command),
+        Commands::Simulate { command } => simulate_command(command),
         Commands::Policy { command } => policy_command(command),
         Commands::Mcp { command } => mcp_command(command),
     }
@@ -519,6 +539,57 @@ fn logs(args: LogsArgs) -> Result<ExitCode> {
         println!("  {}", event.reason);
     }
 
+    Ok(ExitCode::SUCCESS)
+}
+
+fn simulate_command(command: SimulateCommands) -> Result<ExitCode> {
+    match command {
+        SimulateCommands::Shell(args) => simulate_shell_command(args),
+    }
+}
+
+fn simulate_shell_command(args: SimulateShellArgs) -> Result<ExitCode> {
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let policy_path = resolve_policy_path(args.policy.as_deref(), &cwd)?;
+    let policy = load_policy(&policy_path)?;
+    let command = classify_command(&args.command);
+    let request = ShellRequest {
+        actor: args.actor,
+        command: command.command_line,
+        args: args.command,
+        cwd: cwd.display().to_string(),
+        risk: command.risk,
+    };
+    let shell_decision = evaluate_shell(&policy, &request);
+    let network_decisions = extract_network_domains(&request.args)
+        .into_iter()
+        .map(|domain| {
+            let decision = evaluate_network(
+                &policy,
+                &NetworkRequest {
+                    domain: domain.clone(),
+                },
+            );
+            serde_json::json!({
+                "domain": domain,
+                "decision": decision
+            })
+        })
+        .collect::<Vec<_>>();
+    let decision = effective_decision_from_json(&shell_decision, &network_decisions);
+    let explanation = explain_simulation_json(&shell_decision, &network_decisions, &decision);
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "request": request,
+            "decision": decision,
+            "shellDecision": shell_decision,
+            "summary": command.summary,
+            "networkDecisions": network_decisions,
+            "explanation": explanation
+        }))?
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -984,6 +1055,65 @@ fn combined_shell_network_reason(
             .map(|(domain, decision)| format!("network {domain}: {}", decision.reason)),
     );
     reasons.join("; ")
+}
+
+fn effective_decision_from_json(
+    shell: &DecisionResult,
+    network: &[serde_json::Value],
+) -> DecisionResult {
+    if shell.decision == Decision::Deny {
+        return shell.clone();
+    }
+
+    if let Some((domain, decision)) = network.iter().find_map(network_decision_from_json) {
+        if decision.decision == Decision::Deny {
+            let mut decision = decision.clone();
+            decision.reason = format!("network {domain}: {}", decision.reason);
+            return decision;
+        }
+    }
+
+    if shell.decision == Decision::Ask {
+        return shell.clone();
+    }
+
+    if let Some((domain, decision)) = network.iter().find_map(|value| {
+        let (domain, decision) = network_decision_from_json(value)?;
+        (decision.decision == Decision::Ask).then_some((domain, decision))
+    }) {
+        let mut decision = decision.clone();
+        decision.reason = format!("network {domain}: {}", decision.reason);
+        return decision;
+    }
+
+    shell.clone()
+}
+
+fn explain_simulation_json(
+    shell: &DecisionResult,
+    network: &[serde_json::Value],
+    decision: &DecisionResult,
+) -> Vec<String> {
+    let mut explanation = vec![format!("shell {:?}: {}", shell.decision, shell.reason)];
+    for value in network {
+        if let Some((domain, decision)) = network_decision_from_json(value) {
+            explanation.push(format!(
+                "network {domain} {:?}: {}",
+                decision.decision, decision.reason
+            ));
+        }
+    }
+    explanation.push(format!(
+        "effective {:?}: {}",
+        decision.decision, decision.reason
+    ));
+    explanation
+}
+
+fn network_decision_from_json(value: &serde_json::Value) -> Option<(&str, DecisionResult)> {
+    let domain = value.get("domain")?.as_str()?;
+    let decision = serde_json::from_value::<DecisionResult>(value.get("decision")?.clone()).ok()?;
+    Some((domain, decision))
 }
 
 fn wait_for_mcp_approval(

@@ -33,6 +33,11 @@ agentfence skill check --name code-review`}</pre>
         Policy changes can be applied after confirmation, and the patched JSON is validated before it is written.
       </p>
       <pre>{`agentfence policy apply "deny production deploy"`}</pre>
+      <h2>Policy simulator</h2>
+      <p>
+        Simulate hypothetical shell actions without creating approvals or audit rows.
+      </p>
+      <pre>{`agentfence simulate shell -- git status https://transfer.sh/file`}</pre>
       <h2>Presets and bundles</h2>
       <pre>{`agentfence init --preset strict
 agentfence policy bundle keygen --output bundle-key.json

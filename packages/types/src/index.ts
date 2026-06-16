@@ -135,3 +135,17 @@ export interface ShellCheckOutput {
   networkDecisions?: ShellNetworkDecision[];
   approval?: ApprovalRequest | null;
 }
+
+export interface ShellSimulationNetworkDecision {
+  domain: string;
+  decision: DecisionResult;
+}
+
+export interface ShellSimulationOutput {
+  request: ShellRequest;
+  decision: DecisionResult;
+  shellDecision: DecisionResult;
+  summary: string;
+  networkDecisions?: ShellSimulationNetworkDecision[];
+  explanation: string[];
+}

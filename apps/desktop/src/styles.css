@@ -439,6 +439,34 @@ th {
   font-size: 13px;
 }
 
+.simulation-result {
+  display: grid;
+  gap: 8px;
+}
+
+.decision-row {
+  align-items: center;
+  background: #f8faf7;
+  border: 1px solid #e4eae3;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.decision-row span {
+  color: #607168;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.simulation-explanation {
+  margin-top: 4px;
+  max-height: 160px;
+}
+
 .export-panel {
   display: grid;
   gap: 14px;
