@@ -20,14 +20,14 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 0 foundation: Cargo workspace, pnpm workspace, policy schema, docs, CI, desktop app, and website.
 - Milestone 1 shell permission MVP: `agentfence run`, command risk classification, allow/deny/ask decisions, CLI approval prompt, policy discovery, and SQLite audit logs.
 - Milestone 2 desktop MVP: Tauri control plane with daemon health, live approvals, policy assistant preview, audit/export surfaces, MCP and skill controls.
-- Milestone 3 MCP proxy: stdio proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering, daemon-backed ask mode, rate limits, and audit events.
+- Milestone 3 MCP proxy: stdio and scoped HTTP JSON-RPC proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering, daemon-backed ask mode, rate limits, and audit events.
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, plus side-effect-free shell simulation and explanations.
 - Milestone 6 website/docs: homepage, download page, security page, changelog, blog foundation, quickstart, policy, MCP, and audit documentation.
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles.
 - Milestone 8 foundations: signed policy bundles, verification, import, audit export, and local audit reports.
 
-Remaining hardening work is concentrated around deeper shell interception, OS-level filesystem controls, full network proxying, HTTP/SSE MCP transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
+Remaining hardening work is concentrated around deeper shell interception, OS-level filesystem controls, full network proxying, MCP SSE/streaming transports, desktop notifications, richer policy editing, agent-specific integration guides, and optional team/cloud features.
 
 ## Guiding Principles
 
@@ -308,7 +308,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 - Add Codex and Claude Code integration guides with recommended wrapper commands.
 - Add richer desktop policy editing with schema validation and diffs.
 - Add desktop notifications for approval requests.
-- Add HTTP/SSE MCP transport support.
+- Add MCP SSE and streaming HTTP transport support.
 - Explore pseudo-shell or PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.
 

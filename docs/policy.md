@@ -81,7 +81,7 @@ MCP rules control server availability and per-tool/resource/prompt decisions.
 }
 ```
 
-`rateLimit` is enforced by `agentfence mcp proxy` before a permitted call reaches the upstream server.
+`rateLimit` is enforced by `agentfence mcp proxy` and `agentfence mcp http-proxy` before a permitted call reaches the upstream server.
 
 ## Filesystem Rules
 

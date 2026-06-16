@@ -5,7 +5,7 @@ export default function McpPage() {
       <h1>MCP Controls</h1>
       <p>
         MCP policy rules control which servers, tools, resources, and prompts an agent may access. AgentFence
-        includes decision primitives and an initial stdio proxy for client-to-server calls.
+        includes decision primitives, a stdio proxy, and a scoped HTTP JSON-RPC proxy for client-to-server calls.
       </p>
       <pre>{`agentfence mcp check \\
   --server github \\
@@ -16,6 +16,15 @@ export default function McpPage() {
       <p>
         The proxy enforces tools/call, resources/read, and prompts/get, filters denied list entries,
         and can wait on the daemon approval queue with --ask-mode queue.
+      </p>
+      <h2>HTTP JSON-RPC proxy</h2>
+      <pre>{`agentfence mcp http-proxy \\
+  --server github \\
+  --listen 127.0.0.1:37422 \\
+  --upstream http://127.0.0.1:3000/mcp`}</pre>
+      <p>
+        The HTTP proxy applies the same checks to non-streaming HTTP POST JSON-RPC bodies. SSE and
+        streaming responses remain future work.
       </p>
       <h2>Rate limits</h2>
       <p>

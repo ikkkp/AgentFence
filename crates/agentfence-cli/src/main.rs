@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
-use std::io::{self, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::{Arc, Mutex};
@@ -386,6 +386,7 @@ enum McpCommands {
         policy: Option<PathBuf>,
     },
     Proxy(McpProxyArgs),
+    HttpProxy(McpHttpProxyArgs),
 }
 
 #[derive(Debug, Args)]
@@ -404,6 +405,26 @@ struct McpProxyArgs {
     ask_timeout_seconds: u64,
     #[arg(last = true, required = true)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct McpHttpProxyArgs {
+    #[arg(long)]
+    server: String,
+    #[arg(long, default_value = "127.0.0.1:37422")]
+    listen: SocketAddr,
+    #[arg(long)]
+    upstream: String,
+    #[arg(long)]
+    policy: Option<PathBuf>,
+    #[arg(long)]
+    audit: Option<PathBuf>,
+    #[arg(long, default_value = "deny")]
+    ask_mode: McpAskMode,
+    #[arg(long, default_value = "http://127.0.0.1:37421")]
+    daemon: String,
+    #[arg(long, default_value_t = 900)]
+    ask_timeout_seconds: u64,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1272,7 +1293,363 @@ fn mcp_command(command: McpCommands) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         McpCommands::Proxy(args) => mcp_proxy(args),
+        McpCommands::HttpProxy(args) => mcp_http_proxy(args),
     }
+}
+
+#[derive(Debug, Clone)]
+struct HttpUpstream {
+    authority: String,
+    connect_addr: String,
+    path: String,
+}
+
+#[derive(Debug)]
+struct SimpleHttpRequest {
+    method: String,
+    body: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct SimpleHttpResponse {
+    status: u16,
+    content_type: String,
+    body: Vec<u8>,
+}
+
+fn mcp_http_proxy(args: McpHttpProxyArgs) -> Result<ExitCode> {
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let policy_path = resolve_policy_path(args.policy.as_deref(), &cwd)?;
+    let policy = load_policy(&policy_path)?;
+    let upstream = parse_http_upstream(&args.upstream)?;
+    let listener = TcpListener::bind(args.listen)
+        .with_context(|| format!("failed to bind MCP HTTP proxy {}", args.listen))?;
+    let mut rate_limiter = agentfence_mcp::McpRateLimiter::for_server(&policy, &args.server);
+    let audit_store = if policy.audit.enabled {
+        Some(AuditStore::open(
+            args.audit
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(&policy.audit.store)),
+        )?)
+    } else {
+        None
+    };
+
+    eprintln!(
+        "agentfence mcp http-proxy: listening on http://{} and forwarding to {}",
+        args.listen, args.upstream
+    );
+
+    for connection in listener.incoming() {
+        match connection {
+            Ok(mut stream) => {
+                if let Err(error) = handle_mcp_http_connection(
+                    &mut stream,
+                    &args,
+                    &policy,
+                    &upstream,
+                    &mut rate_limiter,
+                    audit_store.as_ref(),
+                ) {
+                    eprintln!("agentfence mcp http-proxy: {error:?}");
+                    let body = serde_json::json!({
+                        "error": "AgentFence MCP HTTP proxy failed",
+                        "detail": error.to_string()
+                    });
+                    let _ = write_http_response(
+                        &mut stream,
+                        500,
+                        "application/json",
+                        serde_json::to_string(&body)?.as_bytes(),
+                    );
+                }
+            }
+            Err(error) => eprintln!("agentfence mcp http-proxy: connection failed: {error}"),
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn handle_mcp_http_connection(
+    stream: &mut TcpStream,
+    args: &McpHttpProxyArgs,
+    policy: &agentfence_policy::Policy,
+    upstream: &HttpUpstream,
+    rate_limiter: &mut agentfence_mcp::McpRateLimiter,
+    audit_store: Option<&AuditStore>,
+) -> Result<()> {
+    let request = read_http_request(stream)?;
+    if request.method != "POST" {
+        let body = serde_json::json!({
+            "error": "AgentFence MCP HTTP proxy only accepts POST requests"
+        });
+        return write_http_response(
+            stream,
+            405,
+            "application/json",
+            serde_json::to_string(&body)?.as_bytes(),
+        );
+    }
+
+    let message = match serde_json::from_slice::<serde_json::Value>(&request.body) {
+        Ok(message) => message,
+        Err(error) => {
+            let body = serde_json::json!({
+                "error": "invalid JSON-RPC body",
+                "detail": error.to_string()
+            });
+            return write_http_response(
+                stream,
+                400,
+                "application/json",
+                serde_json::to_string(&body)?.as_bytes(),
+            );
+        }
+    };
+    let list_method = agentfence_mcp::list_method(&message).map(str::to_string);
+
+    if let Some(request_to_check) = agentfence_mcp::inspect_client_message(&args.server, &message) {
+        let decision = agentfence_mcp::decide(policy, request_to_check);
+        let allowed = match decision.decision.decision {
+            Decision::Allow
+            | Decision::AllowOnce
+            | Decision::AllowForSession
+            | Decision::AllowWithConstraints => true,
+            Decision::Ask => matches!(args.ask_mode, McpAskMode::Allow),
+            Decision::Deny => false,
+        };
+        let allowed = if decision.decision.decision == Decision::Ask
+            && matches!(args.ask_mode, McpAskMode::Queue)
+        {
+            wait_for_mcp_approval(
+                &args.daemon,
+                args.ask_timeout_seconds,
+                &decision.request.server,
+                &decision.request.kind,
+                &decision.request.name,
+                decision.request.arguments.clone(),
+                decision.decision.clone(),
+            )?
+        } else {
+            allowed
+        };
+        let mut denial_decision = decision.decision.clone();
+        let allowed = if allowed {
+            if let Some(rate_limit_decision) = rate_limiter.check(&decision.request) {
+                denial_decision = rate_limit_decision;
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+        append_mcp_audit(
+            audit_store,
+            &decision.request,
+            if allowed {
+                &decision.decision
+            } else {
+                &denial_decision
+            },
+            allowed,
+        )?;
+
+        if !allowed {
+            let body = agentfence_mcp::error_response(
+                &message,
+                -32001,
+                format!(
+                    "AgentFence denied MCP {} {}/{}: {}",
+                    decision.request.kind,
+                    decision.request.server,
+                    decision.request.name,
+                    denial_decision.reason
+                ),
+            );
+            return write_http_response(
+                stream,
+                200,
+                "application/json",
+                serde_json::to_vec(&body)?.as_slice(),
+            );
+        }
+    }
+
+    let mut response = forward_http_json(upstream, &request.body)?;
+    if let Some(method) = list_method {
+        if let Ok(response_json) = serde_json::from_slice::<serde_json::Value>(&response.body) {
+            let filtered =
+                agentfence_mcp::filter_list_response(policy, &args.server, &method, &response_json);
+            if filtered.removed > 0 {
+                eprintln!(
+                    "agentfence mcp http-proxy: filtered {} item(s) from {}",
+                    filtered.removed, method
+                );
+            }
+            response.body = serde_json::to_vec(&filtered.response)?;
+            response.content_type = "application/json".to_string();
+        }
+    }
+
+    write_http_response(
+        stream,
+        response.status,
+        &response.content_type,
+        &response.body,
+    )
+}
+
+fn parse_http_upstream(value: &str) -> Result<HttpUpstream> {
+    let raw = value
+        .strip_prefix("http://")
+        .context("MCP HTTP proxy currently supports http:// upstream URLs only")?;
+    let (authority, path) = match raw.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (raw, "/".to_string()),
+    };
+    if authority.is_empty() {
+        bail!("upstream URL is missing a host");
+    }
+    let connect_addr = if authority.rsplit_once(':').is_some_and(|(_, port)| {
+        !port.is_empty() && port.chars().all(|character| character.is_ascii_digit())
+    }) {
+        authority.to_string()
+    } else {
+        format!("{authority}:80")
+    };
+
+    Ok(HttpUpstream {
+        authority: authority.to_string(),
+        connect_addr,
+        path,
+    })
+}
+
+fn read_http_request(stream: &TcpStream) -> Result<SimpleHttpRequest> {
+    let mut reader = BufReader::new(stream.try_clone().context("failed to clone HTTP stream")?);
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .context("failed to read HTTP request line")?;
+    if request_line.trim().is_empty() {
+        bail!("empty HTTP request");
+    }
+    let method = request_line
+        .split_whitespace()
+        .next()
+        .context("invalid HTTP request line")?
+        .to_string();
+
+    let mut content_length = 0_usize;
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .context("failed to read HTTP header")?;
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value
+                    .trim()
+                    .parse::<usize>()
+                    .context("invalid HTTP Content-Length")?;
+            }
+        }
+    }
+
+    let mut body = vec![0_u8; content_length];
+    if content_length > 0 {
+        reader
+            .read_exact(&mut body)
+            .context("failed to read HTTP body")?;
+    }
+
+    Ok(SimpleHttpRequest { method, body })
+}
+
+fn forward_http_json(upstream: &HttpUpstream, body: &[u8]) -> Result<SimpleHttpResponse> {
+    let mut stream = TcpStream::connect(&upstream.connect_addr)
+        .with_context(|| format!("failed to connect to upstream {}", upstream.connect_addr))?;
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        upstream.path,
+        upstream.authority,
+        body.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("failed to write upstream request headers")?;
+    stream
+        .write_all(body)
+        .context("failed to write upstream request body")?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .context("failed to read upstream response")?;
+    parse_http_response(&response)
+}
+
+fn parse_http_response(response: &[u8]) -> Result<SimpleHttpResponse> {
+    let Some(split) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        bail!("invalid upstream HTTP response");
+    };
+    let head = String::from_utf8_lossy(&response[..split]);
+    let body = response[split + 4..].to_vec();
+    let mut lines = head.lines();
+    let status_line = lines.next().context("missing upstream HTTP status line")?;
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .context("invalid upstream HTTP status line")?
+        .parse::<u16>()
+        .context("invalid upstream HTTP status code")?;
+    let mut content_type = "application/json".to_string();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("content-type") {
+                content_type = value.trim().to_string();
+            }
+        }
+    }
+
+    Ok(SimpleHttpResponse {
+        status,
+        content_type,
+        body,
+    })
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) -> Result<()> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .context("failed to write HTTP response headers")?;
+    stream
+        .write_all(body)
+        .context("failed to write HTTP response body")?;
+    stream.flush().context("failed to flush HTTP response")?;
+    Ok(())
 }
 
 fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {

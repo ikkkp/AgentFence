@@ -29,6 +29,7 @@ cargo run --bin agentfence -- filesystem check --operation read --path ~/.ssh/id
 cargo run --bin agentfence -- network check --domain github.com
 cargo run --bin agentfence -- skill check --name code-review
 cargo run --bin agentfence -- mcp proxy --server github -- node path/to/server.js
+cargo run --bin agentfence -- mcp http-proxy --server github --upstream http://127.0.0.1:3000/mcp
 cargo run --bin agentfenced -- --listen 127.0.0.1:37421
 ```
 

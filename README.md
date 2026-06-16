@@ -9,7 +9,7 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio proxying, MCP rate limits, and audit log reads.
+- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
 - `agentfenced` local HTTP daemon with health, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
@@ -124,17 +124,18 @@ agentfence skill check --name code-review
 agentfence mcp check --server github --kind tool --name create_pull_request
 agentfence mcp proxy --server github -- node path/to/github-mcp-server.js
 agentfence mcp proxy --server github --audit .agentfence/audit.sqlite -- node path/to/server.js
+agentfence mcp http-proxy --server github --upstream http://127.0.0.1:3000/mcp
 ```
 
 ## Security Model
 
-AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy`. Deeper shell interception, broader MCP transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
+AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC calls through `agentfence mcp http-proxy`. Deeper shell interception, MCP SSE/streaming transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
 
 Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 
 Natural-language policy management currently generates JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
 
-The MCP stdio proxy enforces `tools/call`, `resources/read`, and `prompts/get`, and filters denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny in stdio proxy mode, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
+The MCP stdio and HTTP JSON-RPC proxies enforce `tools/call`, `resources/read`, and `prompts/get`, and filter denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
 
 MCP server policies can include `rateLimit` windows. Calls over the limit receive an MCP error response and are not forwarded upstream.
 

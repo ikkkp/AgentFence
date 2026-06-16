@@ -34,7 +34,11 @@ agentfence run --actor claude-code -- claude`}</pre>
       <pre>{`agentfence mcp proxy \\
   --server github \\
   --ask-mode queue \\
-  -- node path/to/github-mcp-server.js`}</pre>
+  -- node path/to/github-mcp-server.js
+
+agentfence mcp http-proxy \\
+  --server github \\
+  --upstream http://127.0.0.1:3000/mcp`}</pre>
       <p>
         `--ask-mode queue` sends ask decisions to the daemon so the desktop approval queue can resolve them.
       </p>

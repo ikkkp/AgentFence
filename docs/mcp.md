@@ -6,7 +6,7 @@ AgentFence treats MCP access as a policy decision problem:
 Agent -> AgentFence MCP Proxy -> Real MCP Server
 ```
 
-The current code implements decision primitives and an initial stdio proxy.
+The current code implements decision primitives, a stdio proxy, and a scoped HTTP JSON-RPC proxy.
 
 ## Current Command
 
@@ -66,9 +66,22 @@ Use `--ask-mode allow` only for trusted local testing. Use `--ask-mode queue` to
 agentfence mcp proxy --server github --ask-mode queue -- node server.js
 ```
 
+## HTTP JSON-RPC Proxy
+
+For MCP servers exposed over ordinary HTTP POST JSON-RPC, run a local AgentFence proxy in front of the upstream endpoint:
+
+```bash
+agentfence mcp http-proxy \
+  --server github \
+  --listen 127.0.0.1:37422 \
+  --upstream http://127.0.0.1:3000/mcp
+```
+
+The HTTP proxy uses the same policy, rate limit, ask-mode, list filtering, and audit behavior as the stdio proxy for JSON request and response bodies. The first implementation is intentionally scoped to non-streaming `http://` upstreams; MCP SSE and streaming responses remain future work.
+
 ## Rate Limits
 
-Rate limits are configured per MCP server and enforced inside the stdio proxy process:
+Rate limits are configured per MCP server and enforced inside the MCP proxy process:
 
 ```json
 {
@@ -96,4 +109,4 @@ The proxy should:
 
 - Register upstream MCP servers.
 - Redact sensitive outputs before audit logging.
-- Support non-stdio transports.
+- Support MCP SSE and streaming HTTP responses.
