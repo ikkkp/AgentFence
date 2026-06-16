@@ -437,6 +437,41 @@ pub struct PolicyPatchProposal {
     pub operations: Vec<JsonPatchOperation>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyObservation {
+    pub actor: String,
+    pub action: String,
+    pub subject: String,
+    pub decision: String,
+    pub risk: String,
+    pub reason: String,
+    pub matched_rule: Option<String>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicySuggestionReport {
+    pub summary: String,
+    pub threshold: usize,
+    pub total_observations: usize,
+    pub suggestions: Vec<PolicySuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicySuggestion {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub event_count: usize,
+    pub action: String,
+    pub subject: String,
+    pub proposal: PolicyPatchProposal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonPatchOperation {
@@ -1159,6 +1194,48 @@ pub fn propose_policy_patch(instruction: &str) -> PolicyPatchProposal {
     }
 }
 
+pub fn suggest_policy_patches(
+    policy: &Policy,
+    observations: &[PolicyObservation],
+    threshold: usize,
+) -> PolicySuggestionReport {
+    let threshold = threshold.max(1);
+    let mut candidates = BTreeMap::<String, SuggestionCandidate>::new();
+
+    for observation in observations {
+        collect_shell_suggestion(policy, observation, &mut candidates);
+        collect_network_suggestions(policy, observation, &mut candidates);
+        collect_mcp_suggestion(policy, observation, &mut candidates);
+        collect_skill_suggestion(policy, observation, &mut candidates);
+    }
+
+    let mut suggestions = candidates
+        .into_values()
+        .filter(|candidate| candidate.event_count >= threshold)
+        .map(SuggestionCandidate::into_suggestion)
+        .collect::<Vec<_>>();
+    suggestions.sort_by(|left, right| {
+        right
+            .event_count
+            .cmp(&left.event_count)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    PolicySuggestionReport {
+        summary: if suggestions.is_empty() {
+            format!("No repeated approved ask decisions met the threshold of {threshold} event(s).")
+        } else {
+            format!(
+                "Generated {} policy suggestion(s) from repeated approved ask decisions.",
+                suggestions.len()
+            )
+        },
+        threshold,
+        total_observations: observations.len(),
+        suggestions,
+    }
+}
+
 pub fn apply_policy_patch(
     value: &mut serde_json::Value,
     operations: &[JsonPatchOperation],
@@ -1174,6 +1251,441 @@ pub fn apply_policy_patch(
 
     let _: Policy = serde_json::from_value(value.clone()).context("patched policy is invalid")?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct SuggestionCandidate {
+    id: String,
+    title: String,
+    description: String,
+    event_count: usize,
+    action: String,
+    subject: String,
+    proposal: PolicyPatchProposal,
+}
+
+impl SuggestionCandidate {
+    fn into_suggestion(mut self) -> PolicySuggestion {
+        self.proposal.summary = format!(
+            "Observed {} approved ask decision(s). {}",
+            self.event_count, self.proposal.summary
+        );
+        PolicySuggestion {
+            id: self.id,
+            title: self.title,
+            description: self.description,
+            event_count: self.event_count,
+            action: self.action,
+            subject: self.subject,
+            proposal: self.proposal,
+        }
+    }
+}
+
+fn collect_shell_suggestion(
+    policy: &Policy,
+    observation: &PolicyObservation,
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+) {
+    if observation.action != "shell.exec"
+        || !observation_allowed_after_ask(observation, &["shell", "decision"])
+    {
+        return;
+    }
+
+    let command = observation.subject.trim();
+    if command.is_empty() || shell_command_already_allowed(policy, command) {
+        return;
+    }
+
+    let slug = slugify(command);
+    let id = format!("allow-shell-{slug}");
+    record_candidate(
+        candidates,
+        format!("shell:{command}"),
+        SuggestionCandidate {
+            id: id.clone(),
+            title: "Allow repeated shell command".to_string(),
+            description: format!(
+                "Proposes an exact allow rule for `{command}` because it was repeatedly approved."
+            ),
+            event_count: 1,
+            action: observation.action.clone(),
+            subject: command.to_string(),
+            proposal: PolicyPatchProposal {
+                summary: format!("Add an exact shell allow rule for `{command}`."),
+                operations: vec![JsonPatchOperation {
+                    op: "add".to_string(),
+                    path: "/shell/rules/0".to_string(),
+                    value: serde_json::json!({
+                        "id": id,
+                        "description": "Allow a repeatedly approved shell command.",
+                        "match": {
+                            "commands": [command]
+                        },
+                        "decision": "allow",
+                        "reason": "approved repeatedly in AgentFence audit history"
+                    }),
+                }],
+            },
+        },
+    );
+}
+
+fn collect_network_suggestions(
+    policy: &Policy,
+    observation: &PolicyObservation,
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+) {
+    if !event_was_allowed(&observation.decision) {
+        return;
+    }
+
+    if let Some(network_decisions) = observation
+        .metadata
+        .get("network")
+        .and_then(serde_json::Value::as_array)
+    {
+        for value in network_decisions {
+            if !json_decision_is(value.get("decision"), "ask") {
+                continue;
+            }
+            let Some(domain) = value.get("domain").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            collect_network_domain_suggestion(policy, observation, domain, candidates);
+        }
+    }
+
+    if observation.action == "network.request"
+        && observation_allowed_after_ask(observation, &["decision"])
+    {
+        collect_network_domain_suggestion(policy, observation, &observation.subject, candidates);
+    }
+}
+
+fn collect_network_domain_suggestion(
+    policy: &Policy,
+    observation: &PolicyObservation,
+    domain: &str,
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+) {
+    let domain = normalize_domain(domain);
+    if domain.is_empty() || network_domain_has_explicit_decision(policy, &domain) {
+        return;
+    }
+
+    let slug = slugify(&domain);
+    record_candidate(
+        candidates,
+        format!("network:{domain}"),
+        SuggestionCandidate {
+            id: format!("allow-network-{slug}"),
+            title: "Allow repeated network domain".to_string(),
+            description: format!(
+                "Proposes adding `{domain}` to allowDomains because access was repeatedly approved."
+            ),
+            event_count: 1,
+            action: observation.action.clone(),
+            subject: domain.clone(),
+            proposal: PolicyPatchProposal {
+                summary: format!("Allow the exact network domain `{domain}`."),
+                operations: vec![JsonPatchOperation {
+                    op: "add".to_string(),
+                    path: "/network/allowDomains/-".to_string(),
+                    value: serde_json::json!(domain),
+                }],
+            },
+        },
+    );
+}
+
+fn collect_mcp_suggestion(
+    policy: &Policy,
+    observation: &PolicyObservation,
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+) {
+    if !observation.action.starts_with("mcp.")
+        || !observation_allowed_after_ask(observation, &["decision"])
+    {
+        return;
+    }
+
+    let Some(server) = observation
+        .metadata
+        .get("server")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    let kind = observation
+        .metadata
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| observation.action.strip_prefix("mcp."))
+        .unwrap_or("tool");
+    let Some(collection) = mcp_collection_name(kind) else {
+        return;
+    };
+    let name = observation
+        .metadata
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| observation.subject.split_once('/').map(|(_, name)| name))
+        .unwrap_or(&observation.subject);
+
+    if name.trim().is_empty() {
+        return;
+    }
+
+    let slug = slugify(&format!("{server}-{kind}-{name}"));
+    let exact_path = format!(
+        "/mcp/servers/{}/{}/{}",
+        json_pointer_escape(server),
+        collection,
+        json_pointer_escape(name)
+    );
+    let operation = if let Some(decision) = mcp_exact_decision(policy, server, kind, name) {
+        if decision_is_allowish(decision) || decision == Decision::Deny {
+            return;
+        }
+        JsonPatchOperation {
+            op: "replace".to_string(),
+            path: exact_path,
+            value: serde_json::json!("allow"),
+        }
+    } else if policy.mcp.servers.contains_key(server) {
+        JsonPatchOperation {
+            op: "add".to_string(),
+            path: exact_path,
+            value: serde_json::json!("allow"),
+        }
+    } else {
+        JsonPatchOperation {
+            op: "add".to_string(),
+            path: format!("/mcp/servers/{}", json_pointer_escape(server)),
+            value: mcp_server_patch_value(collection, name),
+        }
+    };
+
+    record_candidate(
+        candidates,
+        format!("mcp:{server}:{kind}:{name}"),
+        SuggestionCandidate {
+            id: format!("allow-mcp-{slug}"),
+            title: "Allow repeated MCP access".to_string(),
+            description: format!("Proposes an exact allow entry for MCP {kind} `{server}/{name}`."),
+            event_count: 1,
+            action: observation.action.clone(),
+            subject: format!("{server}/{name}"),
+            proposal: PolicyPatchProposal {
+                summary: format!("Allow MCP {kind} `{server}/{name}`."),
+                operations: vec![operation],
+            },
+        },
+    );
+}
+
+fn collect_skill_suggestion(
+    policy: &Policy,
+    observation: &PolicyObservation,
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+) {
+    if observation.action != "skill.use"
+        || !observation_allowed_after_ask(observation, &["decision"])
+    {
+        return;
+    }
+
+    let skill = observation.subject.trim();
+    if skill.is_empty() || policy_skill_is_allow_or_deny(policy, skill) {
+        return;
+    }
+
+    let slug = slugify(skill);
+    let operation = if let Some(index) = policy_skill_ask_rule_index(policy, skill) {
+        JsonPatchOperation {
+            op: "replace".to_string(),
+            path: format!("/skills/rules/{index}/decision"),
+            value: serde_json::json!("allow"),
+        }
+    } else {
+        JsonPatchOperation {
+            op: "add".to_string(),
+            path: "/skills/allow/-".to_string(),
+            value: serde_json::json!(skill),
+        }
+    };
+    record_candidate(
+        candidates,
+        format!("skill:{skill}"),
+        SuggestionCandidate {
+            id: format!("allow-skill-{slug}"),
+            title: "Allow repeated skill".to_string(),
+            description: format!("Proposes allowing skill `{skill}` after repeated approvals."),
+            event_count: 1,
+            action: observation.action.clone(),
+            subject: skill.to_string(),
+            proposal: PolicyPatchProposal {
+                summary: format!("Allow skill `{skill}`."),
+                operations: vec![operation],
+            },
+        },
+    );
+}
+
+fn record_candidate(
+    candidates: &mut BTreeMap<String, SuggestionCandidate>,
+    key: String,
+    candidate: SuggestionCandidate,
+) {
+    candidates
+        .entry(key)
+        .and_modify(|existing| existing.event_count += 1)
+        .or_insert(candidate);
+}
+
+fn observation_allowed_after_ask(observation: &PolicyObservation, metadata_path: &[&str]) -> bool {
+    event_was_allowed(&observation.decision)
+        && json_decision_is(value_at_path(&observation.metadata, metadata_path), "ask")
+}
+
+fn value_at_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for token in path {
+        current = current.get(*token)?;
+    }
+    Some(current)
+}
+
+fn json_decision_is(value: Option<&serde_json::Value>, expected: &str) -> bool {
+    value
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+fn event_was_allowed(decision: &str) -> bool {
+    matches!(decision.to_ascii_lowercase().as_str(), "allow" | "allowed")
+}
+
+fn shell_command_already_allowed(policy: &Policy, command: &str) -> bool {
+    let command = normalize_command(command);
+    policy.shell.rules.iter().any(|rule| {
+        decision_is_allowish(rule.decision)
+            && rule
+                .r#match
+                .commands
+                .iter()
+                .any(|expected| command_matches(&command, &normalize_command(expected)))
+    })
+}
+
+fn network_domain_has_explicit_decision(policy: &Policy, domain: &str) -> bool {
+    let domain = normalize_domain(domain);
+    policy
+        .network
+        .allow_domains
+        .iter()
+        .chain(policy.network.deny_domains.iter())
+        .any(|candidate| domain_matches(&domain, &normalize_domain(candidate)))
+}
+
+fn mcp_exact_decision(policy: &Policy, server: &str, kind: &str, name: &str) -> Option<Decision> {
+    let server_policy = policy.mcp.servers.get(server)?;
+    match kind {
+        "tool" => server_policy.tools.get(name).copied(),
+        "resource" => server_policy.resources.get(name).copied(),
+        "prompt" => server_policy.prompts.get(name).copied(),
+        _ => None,
+    }
+}
+
+fn policy_skill_is_allow_or_deny(policy: &Policy, skill: &str) -> bool {
+    policy
+        .skills
+        .allow
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(skill))
+        || policy
+            .skills
+            .deny
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(skill))
+        || policy.skills.rules.iter().any(|rule| {
+            rule.skill.eq_ignore_ascii_case(skill)
+                && (decision_is_allowish(rule.decision) || rule.decision == Decision::Deny)
+        })
+}
+
+fn policy_skill_ask_rule_index(policy: &Policy, skill: &str) -> Option<usize> {
+    policy
+        .skills
+        .rules
+        .iter()
+        .position(|rule| rule.skill.eq_ignore_ascii_case(skill) && rule.decision == Decision::Ask)
+}
+
+fn mcp_collection_name(kind: &str) -> Option<&'static str> {
+    match kind {
+        "tool" => Some("tools"),
+        "resource" => Some("resources"),
+        "prompt" => Some("prompts"),
+        _ => None,
+    }
+}
+
+fn mcp_server_patch_value(collection: &str, name: &str) -> serde_json::Value {
+    let mut exact_entries = serde_json::Map::new();
+    exact_entries.insert(name.to_string(), serde_json::json!("allow"));
+
+    let mut server = serde_json::Map::new();
+    server.insert("enabled".to_string(), serde_json::json!(true));
+    server.insert("decision".to_string(), serde_json::json!("ask"));
+    server.insert(
+        collection.to_string(),
+        serde_json::Value::Object(exact_entries),
+    );
+    serde_json::Value::Object(server)
+}
+
+fn decision_is_allowish(decision: Decision) -> bool {
+    matches!(
+        decision,
+        Decision::Allow
+            | Decision::AllowOnce
+            | Decision::AllowForSession
+            | Decision::AllowWithConstraints
+    )
+}
+
+fn json_pointer_escape(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
+fn slugify(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_was_dash = false;
+
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            output.push(character.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash && !output.is_empty() {
+            output.push('-');
+            last_was_dash = true;
+        }
+
+        if output.len() >= 56 {
+            break;
+        }
+    }
+
+    let output = output.trim_matches('-').to_string();
+    if output.is_empty() {
+        "observed".to_string()
+    } else {
+        output
+    }
 }
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {
@@ -1517,6 +2029,131 @@ mod tests {
     }
 
     #[test]
+    fn suggests_exact_shell_allow_for_repeated_approvals() {
+        let policy = default_policy(Some("demo".to_string()));
+        let observations = vec![
+            shell_ask_observation("pnpm install"),
+            shell_ask_observation("pnpm install"),
+            shell_ask_observation("pnpm install"),
+        ];
+
+        let report = suggest_policy_patches(&policy, &observations, 3);
+
+        assert_eq!(report.suggestions.len(), 1);
+        let suggestion = &report.suggestions[0];
+        assert_eq!(suggestion.event_count, 3);
+        assert_eq!(suggestion.proposal.operations[0].path, "/shell/rules/0");
+
+        let mut value = serde_json::to_value(policy).unwrap();
+        apply_policy_patch(&mut value, &suggestion.proposal.operations)
+            .expect("suggested patch should apply");
+        let patched: Policy = serde_json::from_value(value).expect("policy");
+        let decision = evaluate_shell(
+            &patched,
+            &ShellRequest {
+                actor: "codex".to_string(),
+                command: "pnpm install".to_string(),
+                args: vec!["pnpm".to_string(), "install".to_string()],
+                cwd: ".".to_string(),
+                risk: Risk::High,
+            },
+        );
+        assert_eq!(decision.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn suggests_network_domain_from_shell_network_approval() {
+        let policy = default_policy(Some("demo".to_string()));
+        let observations = vec![
+            PolicyObservation {
+                actor: "codex".to_string(),
+                action: "shell.exec".to_string(),
+                subject: "curl https://api.example.com/v1".to_string(),
+                decision: "allow".to_string(),
+                risk: "medium".to_string(),
+                reason: "approved".to_string(),
+                matched_rule: None,
+                metadata: serde_json::json!({
+                    "shell": { "decision": "allow" },
+                    "network": [
+                        {
+                            "domain": "https://api.example.com/v1",
+                            "decision": "ask"
+                        }
+                    ]
+                }),
+            },
+            PolicyObservation {
+                actor: "codex".to_string(),
+                action: "shell.exec".to_string(),
+                subject: "curl https://api.example.com/v2".to_string(),
+                decision: "allow".to_string(),
+                risk: "medium".to_string(),
+                reason: "approved".to_string(),
+                matched_rule: None,
+                metadata: serde_json::json!({
+                    "shell": { "decision": "allow" },
+                    "network": [
+                        {
+                            "domain": "api.example.com",
+                            "decision": "ask"
+                        }
+                    ]
+                }),
+            },
+        ];
+
+        let report = suggest_policy_patches(&policy, &observations, 2);
+
+        assert_eq!(report.suggestions.len(), 1);
+        assert_eq!(report.suggestions[0].subject, "api.example.com");
+        assert_eq!(
+            report.suggestions[0].proposal.operations[0].path,
+            "/network/allowDomains/-"
+        );
+    }
+
+    #[test]
+    fn suggests_replacing_repeated_mcp_ask_with_allow() {
+        let mut policy = default_policy(Some("demo".to_string()));
+        policy
+            .mcp
+            .servers
+            .insert("github".to_string(), McpServerPolicy::default());
+        policy
+            .mcp
+            .servers
+            .get_mut("github")
+            .expect("server")
+            .tools
+            .insert("create_pull_request".to_string(), Decision::Ask);
+        let observations = vec![PolicyObservation {
+            actor: "mcp-proxy".to_string(),
+            action: "mcp.tool".to_string(),
+            subject: "github/create_pull_request".to_string(),
+            decision: "allow".to_string(),
+            risk: "medium".to_string(),
+            reason: "approved".to_string(),
+            matched_rule: Some("mcp.servers.github.tools.create_pull_request".to_string()),
+            metadata: serde_json::json!({
+                "server": "github",
+                "kind": "tool",
+                "name": "create_pull_request",
+                "decision": "ask"
+            }),
+        }];
+
+        let report = suggest_policy_patches(&policy, &observations, 1);
+
+        assert_eq!(report.suggestions.len(), 1);
+        assert_eq!(report.suggestions[0].proposal.operations[0].op, "replace");
+        assert_eq!(
+            report.suggestions[0].proposal.operations[0].path,
+            "/mcp/servers/github/tools/create_pull_request"
+        );
+    }
+
+    #[test]
     fn rejects_failed_test_operation() {
         let mut value = serde_json::to_value(default_policy(Some("demo".to_string()))).unwrap();
         let result = apply_policy_patch(
@@ -1529,6 +2166,23 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    fn shell_ask_observation(command: &str) -> PolicyObservation {
+        PolicyObservation {
+            actor: "codex".to_string(),
+            action: "shell.exec".to_string(),
+            subject: command.to_string(),
+            decision: "allow".to_string(),
+            risk: "high".to_string(),
+            reason: "approved".to_string(),
+            matched_rule: Some("ask-package-install".to_string()),
+            metadata: serde_json::json!({
+                "shell": {
+                    "decision": "ask"
+                }
+            }),
+        }
     }
 
     #[test]

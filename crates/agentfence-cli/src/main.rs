@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
 use agentfence_policy::{
     ActorPolicy, Decision, DecisionResult, FilesystemRequest, McpServerPolicy, NetworkRequest,
-    Policy, PolicyBundle, PolicyBundleKeyPair, PolicyPreset, RateLimitPolicy, ShellMatch,
-    ShellRequest, ShellRule, SkillRequest, apply_policy_patch, create_policy_bundle,
+    Policy, PolicyBundle, PolicyBundleKeyPair, PolicyObservation, PolicyPreset, RateLimitPolicy,
+    ShellMatch, ShellRequest, ShellRule, SkillRequest, apply_policy_patch, create_policy_bundle,
     discover_policy, evaluate_filesystem, evaluate_network, evaluate_shell, evaluate_skill,
     generate_policy_bundle_keypair, load_policy, policy_schema_json, preset_policy,
-    propose_policy_patch, save_policy, sign_policy_bundle, verify_policy_bundle,
+    propose_policy_patch, save_policy, sign_policy_bundle, suggest_policy_patches,
+    verify_policy_bundle,
 };
 use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result, bail};
@@ -236,6 +237,18 @@ enum PolicyCommands {
         #[arg(long)]
         yes: bool,
         instruction: Vec<String>,
+    },
+    Suggest {
+        #[arg(long)]
+        policy: Option<PathBuf>,
+        #[arg(long)]
+        audit: Option<PathBuf>,
+        #[arg(long, default_value_t = 1000)]
+        limit: usize,
+        #[arg(long, default_value_t = 3)]
+        threshold: usize,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     Template {
         #[command(subcommand)]
@@ -1181,9 +1194,51 @@ fn policy_command(command: PolicyCommands) -> Result<ExitCode> {
             println!("updated {}", path.display());
             Ok(ExitCode::SUCCESS)
         }
+        PolicyCommands::Suggest {
+            policy,
+            audit,
+            limit,
+            threshold,
+            output,
+        } => {
+            let cwd = env::current_dir().context("failed to read current directory")?;
+            let policy_path = resolve_policy_path(policy.as_deref(), &cwd)?;
+            let policy = load_policy(&policy_path)?;
+            let audit_path = audit.unwrap_or_else(|| PathBuf::from(&policy.audit.store));
+            let store = AuditStore::open(&audit_path)?;
+            let events = store.list_recent(limit)?;
+            let observations = policy_observations_from_audit(&events);
+            let report = suggest_policy_patches(&policy, &observations, threshold);
+            let output_json = serde_json::to_string_pretty(&report)?;
+            if let Some(output) = output {
+                fs::write(&output, output_json).with_context(|| {
+                    format!("failed to write policy suggestions {}", output.display())
+                })?;
+                println!("created policy suggestions {}", output.display());
+            } else {
+                println!("{output_json}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         PolicyCommands::Template { command } => policy_template_command(command),
         PolicyCommands::Bundle { command } => policy_bundle_command(command),
     }
+}
+
+fn policy_observations_from_audit(events: &[AuditEvent]) -> Vec<PolicyObservation> {
+    events
+        .iter()
+        .map(|event| PolicyObservation {
+            actor: event.actor.clone(),
+            action: event.action.clone(),
+            subject: event.subject.clone(),
+            decision: event.decision.clone(),
+            risk: event.risk.clone(),
+            reason: event.reason.clone(),
+            matched_rule: event.matched_rule.clone(),
+            metadata: event.metadata.clone(),
+        })
+        .collect()
 }
 
 fn policy_template_command(command: PolicyTemplateCommands) -> Result<ExitCode> {

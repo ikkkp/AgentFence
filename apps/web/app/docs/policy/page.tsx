@@ -33,6 +33,10 @@ agentfence skill check --name code-review`}</pre>
         Policy changes can be applied after confirmation, and the patched JSON is validated before it is written.
       </p>
       <pre>{`agentfence policy apply "deny production deploy"`}</pre>
+      <p>
+        Audit-driven suggestions scan repeated approved ask decisions and emit narrower JSON Patch proposals.
+      </p>
+      <pre>{`agentfence policy suggest --threshold 3 --limit 1000`}</pre>
       <h2>Policy simulator</h2>
       <p>
         Simulate hypothetical shell actions without creating approvals or audit rows.

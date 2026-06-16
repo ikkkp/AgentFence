@@ -180,6 +180,23 @@ agentfence policy apply --yes "deny production deploy"
 
 `policy apply` prints the proposed operations first, applies them to the policy JSON, then validates the patched policy before writing it back.
 
+## Audit-Driven Suggestions
+
+AgentFence can scan recent audit events and suggest narrower policy rules for actions that were repeatedly approved after an `ask` decision. Suggestions are emitted as JSON Patch proposals and are not applied automatically.
+
+```bash
+agentfence policy suggest --threshold 3 --limit 1000
+agentfence policy suggest --audit .agentfence/audit.sqlite --output suggestions.json
+```
+
+The first implementation suggests exact command allow rules, exact MCP tool/resource/prompt allow entries, exact network `allowDomains` additions, and exact skill allow entries. It only uses events where the action was allowed but the original recorded policy decision was `ask`.
+
+The daemon exposes the same report for desktop and local integrations:
+
+```bash
+curl "http://127.0.0.1:37421/policy/suggestions?threshold=3&limit=1000"
+```
+
 ## Policy Simulator
 
 Use the simulator to explain hypothetical actions without creating approval requests or audit rows:

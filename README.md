@@ -101,6 +101,7 @@ agentfence policy validate agentfence.policy.json
 agentfence policy schema
 agentfence policy ask "allow tests but ask before dependency installs"
 agentfence policy apply --yes "deny production deploy"
+agentfence policy suggest --threshold 3 --limit 1000
 agentfence policy template list
 agentfence policy template export engineering-default --output agentfence.policy.json --force
 agentfence policy bundle export --output team.bundle.json
@@ -136,7 +137,7 @@ AgentFence does not rely on an agent prompt as the security boundary. The policy
 
 Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 
-Natural-language policy management currently generates JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
+Natural-language policy management and audit-driven suggestions generate JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
 
 The MCP stdio and HTTP JSON-RPC proxies enforce `tools/call`, `resources/read`, and `prompts/get`, and filter denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
 

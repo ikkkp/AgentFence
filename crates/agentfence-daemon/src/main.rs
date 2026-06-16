@@ -6,13 +6,13 @@ use std::{env, fs};
 use agentfence_approval::{
     ApprovalCreate, ApprovalQueue, ApprovalRequest, ApprovalResolve, ApprovalStatus,
 };
-use agentfence_audit::{AuditExportFormat, AuditFilter, AuditStore};
+use agentfence_audit::{AuditEvent, AuditExportFormat, AuditFilter, AuditStore};
 use agentfence_mcp::McpAccessRequest;
 use agentfence_policy::{
     Decision, DecisionResult, FilesystemRequest, NetworkRequest, Policy, PolicyBundle,
-    ShellRequest, SkillRequest, create_policy_bundle, discover_policy, evaluate_filesystem,
-    evaluate_network, evaluate_shell, evaluate_skill, load_policy, propose_policy_patch,
-    save_policy, verify_policy_bundle,
+    PolicyObservation, ShellRequest, SkillRequest, create_policy_bundle, discover_policy,
+    evaluate_filesystem, evaluate_network, evaluate_shell, evaluate_skill, load_policy,
+    propose_policy_patch, save_policy, suggest_policy_patches, verify_policy_bundle,
 };
 use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result};
@@ -138,6 +138,14 @@ struct PolicyBundleQuery {
     organization: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PolicySuggestionsQuery {
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default = "default_suggestion_threshold")]
+    threshold: usize,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -159,6 +167,7 @@ async fn main() -> Result<()> {
         .route("/policy", get(policy).put(policy_update))
         .route("/policy/validate", post(policy_validate))
         .route("/policy/ask", post(policy_ask))
+        .route("/policy/suggestions", get(policy_suggestions))
         .route("/policy/presets", get(policy_presets))
         .route("/policy/bundle", get(policy_bundle_export))
         .route("/policy/bundle/verify", post(policy_bundle_verify))
@@ -233,6 +242,18 @@ async fn policy_update(
 async fn policy_ask(Json(input): Json<PolicyAskInput>) -> Result<Json<Value>, ApiError> {
     let proposal = propose_policy_patch(&input.instruction);
     Ok(Json(serde_json::to_value(proposal)?))
+}
+
+async fn policy_suggestions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<PolicySuggestionsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let policy = load_policy(&state.policy_path)?;
+    let store = AuditStore::open(&state.audit_path)?;
+    let events = store.list_recent(query.limit)?;
+    let observations = policy_observations_from_audit(&events);
+    let report = suggest_policy_patches(&policy, &observations, query.threshold);
+    Ok(Json(serde_json::to_value(report)?))
 }
 
 async fn policy_presets() -> Json<Value> {
@@ -565,6 +586,10 @@ fn default_export_format() -> String {
     "json".to_string()
 }
 
+fn default_suggestion_threshold() -> usize {
+    3
+}
+
 fn default_bundle_name() -> String {
     "AgentFence Policy Bundle".to_string()
 }
@@ -584,6 +609,22 @@ fn input_metadata(kind: &str, args: &[String]) -> Value {
         "kind": kind,
         "args": args
     })
+}
+
+fn policy_observations_from_audit(events: &[AuditEvent]) -> Vec<PolicyObservation> {
+    events
+        .iter()
+        .map(|event| PolicyObservation {
+            actor: event.actor.clone(),
+            action: event.action.clone(),
+            subject: event.subject.clone(),
+            decision: event.decision.clone(),
+            risk: event.risk.clone(),
+            reason: event.reason.clone(),
+            matched_rule: event.matched_rule.clone(),
+            metadata: event.metadata.clone(),
+        })
+        .collect()
 }
 
 async fn enqueue_if_ask(
