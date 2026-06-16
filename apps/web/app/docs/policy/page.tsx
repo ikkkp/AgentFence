@@ -50,8 +50,9 @@ agentfence policy review-preset apply release-hardening --yes
 agentfence policy review-preset export release-hardening --output release-hardening.review.json
 agentfence policy review-preset verify release-hardening.review.json
 agentfence policy review-preset sign release-hardening.review.json --key bundle-key.json
-agentfence policy review-preset trust add --name platform --key <public-key>
+agentfence policy review-preset trust add --name platform --key <public-key> --expires-at 2027-01-01T00:00:00Z
 agentfence policy review-preset trust list
+agentfence policy review-preset trust revoke --key <public-key> --reason rotated
 agentfence policy review-preset verify release-hardening.review.json --require-signature --trust-store .agentfence/trusted-review-keys.json
 agentfence policy review-preset import release-hardening.review.json --yes --require-signature --trust-store .agentfence/trusted-review-keys.json`}</pre>
       <p>

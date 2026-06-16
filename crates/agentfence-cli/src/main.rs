@@ -23,6 +23,7 @@ use agentfence_policy::{
 };
 use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -399,6 +400,16 @@ enum PolicyReviewPresetTrustCommands {
         key: String,
         #[arg(long)]
         name: Option<String>,
+        #[arg(long)]
+        expires_at: Option<String>,
+        #[arg(long, default_value = ".agentfence/trusted-review-keys.json")]
+        path: PathBuf,
+    },
+    Revoke {
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        reason: Option<String>,
         #[arg(long, default_value = ".agentfence/trusted-review-keys.json")]
         path: PathBuf,
     },
@@ -2109,9 +2120,19 @@ fn policy_review_preset_trust_command(
             println!("{}", serde_json::to_string_pretty(&store)?);
             Ok(ExitCode::SUCCESS)
         }
-        PolicyReviewPresetTrustCommands::Add { key, name, path } => {
+        PolicyReviewPresetTrustCommands::Add {
+            key,
+            name,
+            expires_at,
+            path,
+        } => {
             let mut store = load_review_preset_trust_store(&path)?;
-            let added = add_review_preset_trusted_key(&mut store, &key, name.as_deref())?;
+            let added = add_review_preset_trusted_key(
+                &mut store,
+                &key,
+                name.as_deref(),
+                expires_at.as_deref(),
+            )?;
             if added {
                 save_review_preset_trust_store(&path, &store)?;
             }
@@ -2121,6 +2142,23 @@ fn policy_review_preset_trust_command(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "path": path.to_string_lossy(),
                     "added": added,
+                    "keyCount": key_count
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        PolicyReviewPresetTrustCommands::Revoke { key, reason, path } => {
+            let mut store = load_review_preset_trust_store(&path)?;
+            let revoked = revoke_review_preset_trusted_key(&mut store, &key, reason.as_deref())?;
+            if revoked {
+                save_review_preset_trust_store(&path, &store)?;
+            }
+            let key_count = review_preset_trust_store_keys(&store)?.len();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "revoked": revoked,
                     "keyCount": key_count
                 }))?
             );
@@ -2204,6 +2242,13 @@ fn empty_review_preset_trust_store() -> serde_json::Value {
 }
 
 fn review_preset_trust_store_keys(store: &serde_json::Value) -> Result<Vec<String>> {
+    review_preset_trust_store_keys_at(store, Utc::now())
+}
+
+fn review_preset_trust_store_keys_at(
+    store: &serde_json::Value,
+    now: DateTime<Utc>,
+) -> Result<Vec<String>> {
     let kind = store
         .get("kind")
         .and_then(serde_json::Value::as_str)
@@ -2229,7 +2274,9 @@ fn review_preset_trust_store_keys(store: &serde_json::Value) -> Result<Vec<Strin
             .get("publicKey")
             .and_then(serde_json::Value::as_str)
             .context("review preset trust store key is missing publicKey")?;
-        push_unique_trusted_key(&mut keys, key);
+        if review_preset_trust_entry_is_active(entry, now)? {
+            push_unique_trusted_key(&mut keys, key);
+        }
     }
     Ok(keys)
 }
@@ -2238,6 +2285,89 @@ fn add_review_preset_trusted_key(
     store: &mut serde_json::Value,
     key: &str,
     name: Option<&str>,
+    expires_at: Option<&str>,
+) -> Result<bool> {
+    review_preset_trust_store_keys(store)?;
+    let key = key.trim();
+    if key.is_empty() {
+        bail!("trusted review preset key cannot be empty");
+    }
+    let now = Utc::now();
+    let now_text = now.to_rfc3339();
+    let expires_at = expires_at
+        .map(|value| parse_review_preset_trust_timestamp(value, "expiresAt"))
+        .transpose()?
+        .map(|value| value.to_rfc3339());
+    let entries = store
+        .get_mut("keys")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("review preset trust store keys must be an array")?;
+    for entry in entries.iter_mut() {
+        if entry.get("publicKey").and_then(serde_json::Value::as_str) == Some(key) {
+            if review_preset_trust_entry_is_active(entry, now)? {
+                return Ok(false);
+            }
+            let object = entry
+                .as_object_mut()
+                .context("review preset trust store key entry must be an object")?;
+            object.insert(
+                "status".to_string(),
+                serde_json::Value::String("trusted".to_string()),
+            );
+            object.insert(
+                "addedAt".to_string(),
+                serde_json::Value::String(now_text.clone()),
+            );
+            object.remove("revokedAt");
+            object.remove("revocationReason");
+            if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+                object.insert(
+                    "name".to_string(),
+                    serde_json::Value::String(name.to_string()),
+                );
+            }
+            if let Some(expires_at) = &expires_at {
+                object.insert(
+                    "expiresAt".to_string(),
+                    serde_json::Value::String(expires_at.clone()),
+                );
+            } else {
+                object.remove("expiresAt");
+            }
+            return Ok(true);
+        }
+    }
+
+    let mut entry = serde_json::Map::new();
+    entry.insert(
+        "status".to_string(),
+        serde_json::Value::String("trusted".to_string()),
+    );
+    entry.insert("addedAt".to_string(), serde_json::Value::String(now_text));
+    if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+        entry.insert(
+            "name".to_string(),
+            serde_json::Value::String(name.to_string()),
+        );
+    }
+    if let Some(expires_at) = &expires_at {
+        entry.insert(
+            "expiresAt".to_string(),
+            serde_json::Value::String(expires_at.clone()),
+        );
+    }
+    entry.insert(
+        "publicKey".to_string(),
+        serde_json::Value::String(key.to_string()),
+    );
+    entries.push(serde_json::Value::Object(entry));
+    Ok(true)
+}
+
+fn revoke_review_preset_trusted_key(
+    store: &mut serde_json::Value,
+    key: &str,
+    reason: Option<&str>,
 ) -> Result<bool> {
     review_preset_trust_store_keys(store)?;
     let key = key.trim();
@@ -2248,26 +2378,87 @@ fn add_review_preset_trusted_key(
         .get_mut("keys")
         .and_then(serde_json::Value::as_array_mut)
         .context("review preset trust store keys must be an array")?;
-    if entries
-        .iter()
-        .any(|entry| entry.get("publicKey").and_then(serde_json::Value::as_str) == Some(key))
-    {
-        return Ok(false);
+    let mut found = false;
+    let mut changed = false;
+    let now_text = Utc::now().to_rfc3339();
+    for entry in entries {
+        if entry.get("publicKey").and_then(serde_json::Value::as_str) != Some(key) {
+            continue;
+        }
+        found = true;
+        let object = entry
+            .as_object_mut()
+            .context("review preset trust store key entry must be an object")?;
+        if object
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("trusted")
+            == "revoked"
+        {
+            continue;
+        }
+        object.insert(
+            "status".to_string(),
+            serde_json::Value::String("revoked".to_string()),
+        );
+        object.insert(
+            "revokedAt".to_string(),
+            serde_json::Value::String(now_text.clone()),
+        );
+        if let Some(reason) = reason.map(str::trim).filter(|reason| !reason.is_empty()) {
+            object.insert(
+                "revocationReason".to_string(),
+                serde_json::Value::String(reason.to_string()),
+            );
+        } else {
+            object.remove("revocationReason");
+        }
+        changed = true;
     }
 
-    let mut entry = serde_json::Map::new();
-    if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
-        entry.insert(
-            "name".to_string(),
-            serde_json::Value::String(name.to_string()),
-        );
+    if !found {
+        bail!("review preset trust store does not contain key {key}");
     }
-    entry.insert(
-        "publicKey".to_string(),
-        serde_json::Value::String(key.to_string()),
-    );
-    entries.push(serde_json::Value::Object(entry));
+    Ok(changed)
+}
+
+fn review_preset_trust_entry_is_active(
+    entry: &serde_json::Value,
+    now: DateTime<Utc>,
+) -> Result<bool> {
+    for field in ["addedAt", "revokedAt"] {
+        if let Some(value) = entry.get(field).and_then(serde_json::Value::as_str) {
+            parse_review_preset_trust_timestamp(value, field)?;
+        }
+    }
+    let expires_at = entry
+        .get("expiresAt")
+        .and_then(serde_json::Value::as_str)
+        .map(|value| parse_review_preset_trust_timestamp(value, "expiresAt"))
+        .transpose()?;
+    let status = entry
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("trusted");
+    match status {
+        "trusted" => {}
+        "revoked" => return Ok(false),
+        other => bail!("unsupported review preset trust key status {other}"),
+    }
+
+    if let Some(expires_at) = expires_at {
+        if expires_at <= now {
+            return Ok(false);
+        }
+    }
+
     Ok(true)
+}
+
+fn parse_review_preset_trust_timestamp(value: &str, field: &str) -> Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Utc))
+        .with_context(|| format!("invalid review preset trust store {field} timestamp {value}"))
 }
 
 fn push_unique_trusted_key(keys: &mut Vec<String>, key: &str) {
@@ -4782,17 +4973,63 @@ mod tests {
         let mut store = empty_review_preset_trust_store();
 
         assert!(
-            add_review_preset_trusted_key(&mut store, " key-a ", Some("platform"))
+            add_review_preset_trusted_key(&mut store, " key-a ", Some("platform"), None)
                 .expect("add key")
         );
         assert!(
-            !add_review_preset_trusted_key(&mut store, "key-a", Some("platform"))
+            !add_review_preset_trusted_key(&mut store, "key-a", Some("platform"), None)
                 .expect("duplicate")
         );
 
         let keys = review_preset_trust_store_keys(&store).expect("keys");
         assert_eq!(keys, vec!["key-a".to_string()]);
         assert_eq!(store["keys"][0]["name"], "platform");
+        assert_eq!(store["keys"][0]["status"], "trusted");
+        assert!(store["keys"][0]["addedAt"].as_str().is_some());
+    }
+
+    #[test]
+    fn review_preset_trust_store_ignores_revoked_and_expired_keys() {
+        let store = serde_json::json!({
+            "kind": REVIEW_PRESET_TRUST_STORE_KIND,
+            "version": REVIEW_PRESET_TRUST_STORE_VERSION,
+            "keys": [
+                { "publicKey": "key-a", "status": "trusted" },
+                { "publicKey": "key-b", "status": "revoked", "revokedAt": "2024-01-01T00:00:00Z" },
+                { "publicKey": "key-c", "status": "trusted", "expiresAt": "2024-01-01T00:00:00Z" },
+                { "publicKey": "key-d", "status": "trusted", "expiresAt": "2030-01-01T00:00:00Z" }
+            ]
+        });
+        let now = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+
+        let keys = review_preset_trust_store_keys_at(&store, now).expect("keys");
+
+        assert_eq!(keys, vec!["key-a".to_string(), "key-d".to_string()]);
+    }
+
+    #[test]
+    fn review_preset_trust_store_revokes_key_with_metadata() {
+        let mut store = empty_review_preset_trust_store();
+        add_review_preset_trusted_key(
+            &mut store,
+            "key-a",
+            Some("platform"),
+            Some("2030-01-01T00:00:00Z"),
+        )
+        .expect("add key");
+
+        assert!(
+            revoke_review_preset_trusted_key(&mut store, "key-a", Some("rotated"))
+                .expect("revoke key")
+        );
+
+        let keys = review_preset_trust_store_keys(&store).expect("keys");
+        assert!(keys.is_empty());
+        assert_eq!(store["keys"][0]["status"], "revoked");
+        assert_eq!(store["keys"][0]["revocationReason"], "rotated");
+        assert!(store["keys"][0]["revokedAt"].as_str().is_some());
     }
 
     #[test]
@@ -4803,7 +5040,7 @@ mod tests {
         let directory = test_temp_dir("review-preset-trust-store");
         let trust_store = directory.join("trusted-review-keys.json");
         let mut store = empty_review_preset_trust_store();
-        add_review_preset_trusted_key(&mut store, &keypair.public_key, Some("local"))
+        add_review_preset_trusted_key(&mut store, &keypair.public_key, Some("local"), None)
             .expect("add key");
         save_review_preset_trust_store(&trust_store, &store).expect("save store");
 
@@ -4814,6 +5051,30 @@ mod tests {
         assert_eq!(trusted_keys, vec![keypair.public_key]);
         assert_eq!(verification["valid"], true);
         assert_eq!(verification["signatureTrusted"], true);
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn review_preset_verification_rejects_revoked_store_key() {
+        let keypair = generate_policy_bundle_keypair();
+        let directory = test_temp_dir("revoked-review-preset-trust-store");
+        let trust_store = directory.join("trusted-review-keys.json");
+        let mut store = empty_review_preset_trust_store();
+        add_review_preset_trusted_key(&mut store, &keypair.public_key, Some("local"), None)
+            .expect("add key");
+        revoke_review_preset_trusted_key(&mut store, &keypair.public_key, Some("rotated"))
+            .expect("revoke key");
+        save_review_preset_trust_store(&trust_store, &store).expect("save store");
+
+        let error = review_preset_trusted_keys(&[], Some(&trust_store))
+            .expect_err("revoked trust store key should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("did not contain any trusted keys")
+        );
 
         fs::remove_dir_all(directory).ok();
     }

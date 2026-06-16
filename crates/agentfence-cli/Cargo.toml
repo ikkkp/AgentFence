@@ -17,6 +17,6 @@ agentfence-mcp = { path = "../agentfence-mcp" }
 agentfence-policy = { path = "../agentfence-policy" }
 agentfence-shell = { path = "../agentfence-shell" }
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-

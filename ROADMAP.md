@@ -306,7 +306,7 @@ The exact timeline depends on team size, but a realistic solo or small-team plan
 
 - Keep CLI, daemon, desktop, and website verification green in CI.
 - Add release signing and notarization around generated installer artifacts.
-- Add trust-store rotation and revocation metadata for review preset signing keys.
+- Add team policy distribution and trust transparency metadata for signed artifacts.
 - Explore deeper filtering for open-ended non-JSON MCP streams.
 - Explore full PTY integration for agents that launch nested commands.
 - Explore OS-level or proxy-level network and filesystem controls.
