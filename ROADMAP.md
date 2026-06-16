@@ -20,7 +20,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 0 foundation: Cargo workspace, pnpm workspace, policy schema, docs, CI, desktop app, and website.
 - Milestone 1 shell permission MVP: `agentfence run`, command risk classification, allow/deny/ask decisions, CLI approval prompt, policy discovery, and SQLite audit logs.
 - Milestone 2 desktop MVP: Tauri control plane with daemon health, live approvals, policy assistant preview, audit/export surfaces, MCP and skill controls.
-- Milestone 3 MCP proxy: stdio proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering and daemon-backed ask mode.
+- Milestone 3 MCP proxy: stdio proxy enforcement for `tools/call`, `resources/read`, and `prompts/get`, plus list filtering, daemon-backed ask mode, rate limits, and audit events.
 - Milestone 4 controls: filesystem, network, skill, MCP, MCP rate limits, secret redaction, policy presets, and guarded-command network domain checks.
 - Milestone 5 policy assistant and simulator: deterministic JSON Patch proposal/apply flow, plus side-effect-free shell simulation and explanations.
 - Milestone 6 website/docs: homepage, download page, security page, quickstart, policy, MCP, and audit documentation.

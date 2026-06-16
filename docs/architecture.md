@@ -64,7 +64,7 @@ The daemon lives in `crates/agentfence-daemon`. It provides local HTTP APIs for 
 
 ### Audit Store
 
-The audit store lives in `crates/agentfence-audit` and writes local SQLite records. Events include actor, action, subject, decision, risk, reason, matched rule, working directory, and metadata.
+The audit store lives in `crates/agentfence-audit` and writes local SQLite records. Events include actor, action, subject, decision, risk, reason, matched rule, working directory, and metadata. Guarded shell execution and MCP proxy calls both write audit events when policy audit logging is enabled.
 
 Command subjects and reasons are passed through a lightweight redactor before being written, covering common token, password, API key, GitHub token, OpenAI-style key, and AWS access key shapes.
 

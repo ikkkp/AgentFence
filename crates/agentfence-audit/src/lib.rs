@@ -56,6 +56,20 @@ pub fn redact_secrets(input: &str) -> String {
         .join(" ")
 }
 
+pub fn redact_metadata(value: &Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(redact_secrets(value)),
+        Value::Array(values) => Value::Array(values.iter().map(redact_metadata).collect()),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), redact_metadata(value)))
+                .collect(),
+        ),
+        value => value.clone(),
+    }
+}
+
 fn redact_token(token: &str) -> String {
     let lower = token.to_ascii_lowercase();
     let sensitive_keys = [
@@ -132,6 +146,20 @@ mod tests {
     }
 
     #[test]
+    fn metadata_redaction_walks_nested_values() {
+        let metadata = serde_json::json!({
+            "token": "token=abc123",
+            "nested": {
+                "args": ["safe", "sk-test"]
+            }
+        });
+        let redacted = redact_metadata(&metadata);
+
+        assert_eq!(redacted["token"], "token=[REDACTED]");
+        assert_eq!(redacted["nested"]["args"][1], "[REDACTED_SECRET]");
+    }
+
+    #[test]
     fn csv_rows_escape_commas_and_quotes() {
         let row = csv_row(&["simple", "has,comma", "has\"quote"]);
         assert_eq!(row, "simple,\"has,comma\",\"has\"\"quote\"");
@@ -155,8 +183,8 @@ impl AuditStore {
     }
 
     pub fn append(&self, event: &AuditEvent) -> Result<()> {
-        let metadata =
-            serde_json::to_string(&event.metadata).context("failed to encode metadata")?;
+        let metadata = serde_json::to_string(&redact_metadata(&event.metadata))
+            .context("failed to encode metadata")?;
         self.conn.execute(
             "insert into audit_events (
                 id, timestamp, actor, action, subject, decision, risk, reason, matched_rule, cwd, metadata

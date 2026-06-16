@@ -120,19 +120,22 @@ agentfence network check --domain github.com
 agentfence skill check --name code-review
 agentfence mcp check --server github --kind tool --name create_pull_request
 agentfence mcp proxy --server github -- node path/to/github-mcp-server.js
+agentfence mcp proxy --server github --audit .agentfence/audit.sqlite -- node path/to/server.js
 ```
 
 ## Security Model
 
 AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy`. Deeper shell interception, broader MCP transports, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
 
-Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects and reasons to SQLite.
+Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 
 Natural-language policy management currently generates JSON Patch proposals only. The assistant path does not apply changes or bypass deterministic enforcement by itself.
 
 The MCP stdio proxy enforces `tools/call`, `resources/read`, and `prompts/get`, and filters denied entries from `tools/list`, `resources/list`, and `prompts/list` responses. `ask` decisions default to deny in stdio proxy mode, can be allowed for trusted testing with `--ask-mode allow`, or can wait on the daemon approval queue with `--ask-mode queue`.
 
 MCP server policies can include `rateLimit` windows. Calls over the limit receive an MCP error response and are not forwarded upstream.
+
+MCP proxy decisions are written to the configured audit store when policy audit logging is enabled.
 
 Policy bundles include a SHA-256 digest for integrity verification and support Ed25519 signatures for team policy distribution.
 

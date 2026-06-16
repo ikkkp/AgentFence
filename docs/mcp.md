@@ -39,6 +39,7 @@ Run an upstream MCP server behind AgentFence:
 
 ```bash
 agentfence mcp proxy --server github -- node path/to/github-mcp-server.js
+agentfence mcp proxy --server github --audit .agentfence/audit.sqlite -- node path/to/server.js
 ```
 
 The proxy inspects client-to-server JSON-RPC messages:
@@ -50,6 +51,8 @@ The proxy inspects client-to-server JSON-RPC messages:
 - `rateLimit` blocks excessive allowed calls before they reach the upstream server.
 
 Allowed requests are forwarded to the upstream server. Denied requests receive a JSON-RPC error response and never reach upstream.
+
+Each inspected call writes an audit event when policy audit logging is enabled. The event subject is `server/name`, the action is `mcp.tool`, `mcp.resource`, or `mcp.prompt`, and metadata includes the MCP arguments.
 
 `ask` decisions default to deny in stdio proxy mode:
 

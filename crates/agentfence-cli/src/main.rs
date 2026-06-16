@@ -303,6 +303,8 @@ struct McpProxyArgs {
     server: String,
     #[arg(long)]
     policy: Option<PathBuf>,
+    #[arg(long)]
+    audit: Option<PathBuf>,
     #[arg(long, default_value = "deny")]
     ask_mode: McpAskMode,
     #[arg(long, default_value = "http://127.0.0.1:37421")]
@@ -865,6 +867,15 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
     let policy_for_upstream = policy.clone();
     let server_for_upstream = args.server.clone();
     let mut rate_limiter = agentfence_mcp::McpRateLimiter::for_server(&policy, &args.server);
+    let audit_store = if policy.audit.enabled {
+        Some(AuditStore::open(
+            args.audit
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(&policy.audit.store)),
+        )?)
+    } else {
+        None
+    };
 
     let mut child = Command::new(&args.command[0])
         .args(&args.command[1..])
@@ -990,6 +1001,16 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
         } else {
             false
         };
+        append_mcp_audit(
+            audit_store.as_ref(),
+            &decision.request,
+            if allowed {
+                &decision.decision
+            } else {
+                &denial_decision
+            },
+            allowed,
+        )?;
 
         if allowed {
             agentfence_mcp::write_frame(&mut upstream_stdin, &frame)?;
@@ -1170,6 +1191,35 @@ fn wait_for_mcp_approval(
             _ => thread::sleep(Duration::from_millis(500)),
         }
     }
+}
+
+fn append_mcp_audit(
+    store: Option<&AuditStore>,
+    request: &agentfence_mcp::McpAccessRequest,
+    decision: &DecisionResult,
+    allowed: bool,
+) -> Result<()> {
+    let Some(store) = store else {
+        return Ok(());
+    };
+
+    let mut event = AuditEvent::new(
+        "mcp-proxy",
+        format!("mcp.{}", request.kind),
+        format!("{}/{}", request.server, request.name),
+        if allowed { "allow" } else { "deny" },
+        format!("{:?}", decision.risk).to_ascii_lowercase(),
+        decision.reason.clone(),
+    );
+    event.matched_rule = decision.matched_rule.clone();
+    event.metadata = serde_json::json!({
+        "server": &request.server,
+        "kind": &request.kind,
+        "name": &request.name,
+        "arguments": &request.arguments,
+        "decision": decision.decision
+    });
+    store.append(&event)
 }
 
 fn resolve_policy_path(explicit: Option<&Path>, cwd: &Path) -> Result<PathBuf> {

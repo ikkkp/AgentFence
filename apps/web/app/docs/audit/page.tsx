@@ -6,6 +6,9 @@ export default function AuditPage() {
       <p>
         AgentFence stores audit events locally in SQLite and exports recent events as JSON or CSV.
       </p>
+      <p>
+        Guarded shell commands and MCP proxy decisions are recorded when audit logging is enabled.
+      </p>
       <pre>{`agentfence audit export --format json --output audit.json
 agentfence audit export --format csv --output audit.csv`}</pre>
       <h2>Daemon endpoint</h2>
