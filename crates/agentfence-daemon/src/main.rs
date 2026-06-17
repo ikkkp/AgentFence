@@ -24,7 +24,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tower_http::cors::CorsLayer;
 
 #[derive(Debug, Parser)]
@@ -43,6 +43,7 @@ struct AppState {
     policy_path: PathBuf,
     audit_path: PathBuf,
     approvals: Mutex<ApprovalQueue>,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,15 +156,18 @@ async fn main() -> Result<()> {
         None => discover_policy(&cwd).unwrap_or_else(|_| cwd.join("agentfence.policy.json")),
     };
     let initial_policy = load_policy(&policy_path)?;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let state = Arc::new(AppState {
         policy_path,
         audit_path: args.audit,
         approvals: Mutex::new(ApprovalQueue::new(initial_policy.approval.ttl_seconds)),
+        shutdown_tx,
     });
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/shutdown", post(shutdown))
         .route("/policy", get(policy).put(policy_update))
         .route("/policy/validate", post(policy_validate))
         .route("/policy/ask", post(policy_ask))
@@ -191,7 +195,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to bind {}", args.listen))?;
     println!("agentfenced listening on http://{}", args.listen);
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_rx))
         .await
         .context("daemon server failed")?;
     Ok(())
@@ -202,6 +206,13 @@ async fn health() -> Json<Value> {
         "status": "ready",
         "service": "agentfenced",
         "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+async fn shutdown(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let _ = state.shutdown_tx.send(true);
+    Json(json!({
+        "shutdown": true
     }))
 }
 
@@ -570,8 +581,20 @@ async fn resolve_approval(
     Ok(Json(serde_json::to_value(approval)?))
 }
 
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+async fn shutdown_signal(mut shutdown_rx: watch::Receiver<bool>) {
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = async {
+            loop {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+                if shutdown_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        } => {}
+    }
 }
 
 fn default_actor() -> String {

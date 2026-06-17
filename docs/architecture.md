@@ -33,6 +33,7 @@ The CLI lives in `crates/agentfence-cli`. It is the first enforcement entry poin
 - `check` evaluates shell command risk and policy decisions.
 - `run` checks a command, evaluates discovered network domains, asks for approval when needed, writes an audit event, and only then executes.
 - `logs` reads the local SQLite audit store.
+- `daemon start`, `daemon status`, `daemon stop`, and `daemon restart` manage the local daemon lifecycle.
 - `approvals list` and `approve` inspect and resolve daemon approval requests from the terminal.
 - `mcp check` evaluates MCP access decisions.
 - `integrations install` writes agent wrapper scripts and can optionally register the wrapper directory on the user PATH.
@@ -42,6 +43,7 @@ The CLI lives in `crates/agentfence-cli`. It is the first enforcement entry poin
 The daemon lives in `crates/agentfence-daemon`. It provides local HTTP APIs for the desktop app and future agent integrations:
 
 - `GET /health`
+- `POST /shutdown`
 - `GET /policy`
 - `PUT /policy`
 - `POST /policy/validate`
@@ -75,7 +77,7 @@ The approval queue lives in `crates/agentfence-approval` and is hosted in memory
 
 ### Desktop UI
 
-The desktop app lives in `apps/desktop`. It uses Tauri, React, TypeScript, and Vite. The current UI has dashboard, approval, audit, policy, MCP, skill, export, and settings surfaces. The policy editor validates JSON, shows a line-level diff against the last loaded or saved policy, can review and apply selected JSON Patch operations, can apply daemon-generated audit suggestions, and includes structured quick-rule controls for shell commands, network domains, and skills before changes are saved. Settings can point the UI at a different local daemon endpoint and test local approval notifications; by default it checks daemon health through `http://127.0.0.1:37421/health`.
+The desktop app lives in `apps/desktop`. It uses Tauri, React, TypeScript, and Vite. The current UI has dashboard, approval, audit, policy, MCP, skill, export, and settings surfaces. The policy editor validates JSON, shows a line-level diff against the last loaded or saved policy, can review and apply selected JSON Patch operations, can apply daemon-generated audit suggestions, and includes structured quick-rule controls for shell commands, network domains, and skills before changes are saved. Settings can point the UI at a different local daemon endpoint, start or stop the default local daemon, and test local approval notifications; by default it checks daemon health through `http://127.0.0.1:37421/health`.
 
 ### Website
 

@@ -9,8 +9,8 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
-- `agentfenced` local HTTP daemon with health, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
+- `agentfence` CLI with policy initialization, validation, daemon lifecycle controls, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
+- `agentfenced` local HTTP daemon with health, shutdown, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
 - Next.js website shell with homepage, download, security, changelog, blog, and docs pages.
@@ -66,6 +66,15 @@ cargo run --bin agentfence -- logs --limit 10
 Start the local daemon:
 
 ```bash
+agentfence daemon start --listen 127.0.0.1:37421
+agentfence daemon status
+```
+
+When working from source, build both binaries first or run the daemon directly:
+
+```bash
+cargo build --bin agentfence --bin agentfenced
+cargo run --bin agentfence -- daemon start --listen 127.0.0.1:37421
 cargo run --bin agentfenced -- --listen 127.0.0.1:37421
 ```
 
@@ -124,6 +133,10 @@ agentfence integrations install codex --format powershell --output-dir .agentfen
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
 agentfence audit report --format markdown --output audit-report.md
+agentfence daemon status
+agentfence daemon start --listen 127.0.0.1:37421
+agentfence daemon stop
+agentfence daemon restart
 agentfence approvals list
 agentfence approve <approval-id> --decision allowed
 agentfence filesystem check --operation read --path ~/.ssh/id_rsa

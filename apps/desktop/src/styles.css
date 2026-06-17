@@ -145,7 +145,8 @@ nav a:hover {
 }
 
 .daemon-guide strong,
-.daemon-guide code {
+.daemon-guide code,
+.daemon-guide small {
   display: block;
 }
 
@@ -159,6 +160,19 @@ nav a:hover {
   color: #17211c;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.daemon-guide small {
+  color: #6f6550;
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.daemon-guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .text-button {
@@ -901,6 +915,12 @@ th {
   gap: 12px;
   justify-content: space-between;
   padding: 11px;
+}
+
+.daemon-action-status {
+  color: #607168;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .notification-settings span,

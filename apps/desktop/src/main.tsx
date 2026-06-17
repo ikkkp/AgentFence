@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   ApprovalRequest,
   AuditEvent,
@@ -17,6 +18,8 @@ import {
   FileJson,
   History,
   Plug,
+  Power,
+  PowerOff,
   RefreshCw,
   Save,
   Shield,
@@ -128,6 +131,7 @@ function App() {
   const [daemonBase, setDaemonBase] = useState(DEFAULT_DAEMON_BASE);
   const [daemonBaseDraft, setDaemonBaseDraft] = useState(DEFAULT_DAEMON_BASE);
   const [daemon, setDaemon] = useState<"checking" | "ready" | "offline">("checking");
+  const [daemonActionStatus, setDaemonActionStatus] = useState("Local daemon controls ready");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>(fallbackApprovals);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(fallbackAudit);
   const [auditActorFilter, setAuditActorFilter] = useState("");
@@ -159,14 +163,7 @@ function App() {
   const reviewedProposal = useMemo(() => parsePolicyProposal(policyProposal), [policyProposal]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setDaemon("checking");
-    fetch(`${daemonBase}/health`, { signal: controller.signal })
-      .then((response) => {
-        setDaemon(response.ok ? "ready" : "offline");
-      })
-      .catch(() => setDaemon("offline"));
-    return () => controller.abort();
+    refreshDaemonHealth();
   }, [daemonBase]);
 
   useEffect(() => {
@@ -188,6 +185,53 @@ function App() {
     const timer = window.setInterval(refreshAudit, 5000);
     return () => window.clearInterval(timer);
   }, [auditActorFilter, auditActionFilter, auditDecisionFilter, daemonBase]);
+
+  async function refreshDaemonHealth() {
+    setDaemon("checking");
+    try {
+      const response = await fetch(`${daemonBase}/health`);
+      const ready = response.ok;
+      setDaemon(ready ? "ready" : "offline");
+      return ready;
+    } catch {
+      setDaemon("offline");
+      return false;
+    }
+  }
+
+  async function refreshDaemonData() {
+    await refreshDaemonHealth();
+    await Promise.all([
+      refreshApprovals(),
+      refreshAudit(),
+      refreshPolicy(),
+      refreshPolicySuggestions(),
+      refreshBundleDigest()
+    ]);
+  }
+
+  async function startLocalDaemon() {
+    setDaemonActionStatus("Starting local daemon");
+    try {
+      const message = await invoke<string>("start_daemon");
+      setDaemonActionStatus(message);
+    } catch (error) {
+      setDaemonActionStatus(errorMessage(error));
+    }
+    await refreshDaemonData();
+  }
+
+  async function stopLocalDaemon() {
+    setDaemonActionStatus("Stopping local daemon");
+    try {
+      const message = await invoke<string>("stop_daemon");
+      setDaemonActionStatus(message);
+    } catch (error) {
+      setDaemonActionStatus(errorMessage(error));
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    await refreshDaemonData();
+  }
 
   async function refreshApprovals() {
     try {
@@ -597,17 +641,17 @@ function App() {
           <section className="daemon-guide" aria-label="Daemon connection">
             <div>
               <strong>Daemon {daemon}</strong>
-              <code>cargo run --bin agentfenced -- --listen 127.0.0.1:37421</code>
+              <code>agentfence daemon start --listen 127.0.0.1:37421</code>
+              <small>{daemonActionStatus}</small>
             </div>
-            <button className="text-button" onClick={() => {
-              refreshApprovals();
-              refreshAudit();
-              refreshPolicy();
-              refreshPolicySuggestions();
-              refreshBundleDigest();
-            }}>
-              <RefreshCw size={15} />Retry
-            </button>
+            <div className="daemon-guide-actions">
+              <button className="text-button primary" onClick={startLocalDaemon}>
+                <Power size={15} />Start
+              </button>
+              <button className="text-button" onClick={refreshDaemonData}>
+                <RefreshCw size={15} />Retry
+              </button>
+            </div>
           </section>
         )}
 
@@ -913,15 +957,18 @@ function App() {
                   Reset
                 </button>
                 <button className="text-button" onClick={() => {
-                  refreshApprovals();
-                  refreshAudit();
-                  refreshPolicy();
-                  refreshPolicySuggestions();
-                  refreshBundleDigest();
+                  refreshDaemonData();
                 }}>
                   <RefreshCw size={15} />Refresh
                 </button>
+                <button className="text-button" onClick={startLocalDaemon}>
+                  <Power size={15} />Start
+                </button>
+                <button className="text-button" onClick={stopLocalDaemon}>
+                  <PowerOff size={15} />Stop
+                </button>
               </div>
+              <div className="daemon-action-status">{daemonActionStatus}</div>
               <div className="notification-settings">
                 <div>
                   <span>Notification permission</span>
@@ -1034,6 +1081,13 @@ function formatAuditTime(timestamp: string) {
 function normalizeDaemonBase(value: string) {
   const trimmed = value.trim().replace(/\/+$/, "");
   return trimmed || DEFAULT_DAEMON_BASE;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function quickRulePlaceholder(scope: QuickRuleScope) {

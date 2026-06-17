@@ -11,6 +11,8 @@ export default function QuickstartPage() {
         <li>Review decisions and audit logs.</li>
       </ol>
       <pre>{`agentfence init
+agentfence daemon start --listen 127.0.0.1:37421
+agentfence daemon status
 agentfence check -- git status
 agentfence run -- git status --short
 agentfence approvals list

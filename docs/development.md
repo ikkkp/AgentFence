@@ -29,6 +29,10 @@ cargo run --bin agentfence -- policy bundle keygen --output bundle-key.json
 cargo run --bin agentfence -- policy bundle export --output team.bundle.json
 cargo run --bin agentfence -- policy bundle sign team.bundle.json --key bundle-key.json
 cargo run --bin agentfence -- audit export --format csv --limit 100
+cargo build --bin agentfence --bin agentfenced
+cargo run --bin agentfence -- daemon start --listen 127.0.0.1:37421
+cargo run --bin agentfence -- daemon status
+cargo run --bin agentfence -- daemon stop
 cargo run --bin agentfence -- approvals list
 cargo run --bin agentfence -- shell --actor codex
 cargo run --bin agentfence -- filesystem check --operation read --path ~/.ssh/id_rsa

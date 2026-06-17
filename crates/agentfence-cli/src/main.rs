@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
 use agentfence_policy::{
     ActorPolicy, Decision, DecisionResult, FilesystemRequest, JsonPatchOperation, McpServerPolicy,
@@ -25,6 +28,13 @@ use agentfence_shell::{classify_command, extract_network_domains};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x00000008;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Parser)]
 #[command(name = "agentfence")]
@@ -50,6 +60,10 @@ enum Commands {
         command: ApprovalCommands,
     },
     Approve(ApproveArgs),
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
     Filesystem {
         #[command(subcommand)]
         command: FilesystemCommands,
@@ -222,6 +236,46 @@ struct ApproveArgs {
     reason: Option<String>,
     #[arg(long, default_value = "http://127.0.0.1:37421")]
     daemon: String,
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommands {
+    Status {
+        #[arg(long, default_value = "http://127.0.0.1:37421")]
+        daemon: String,
+    },
+    Start(DaemonStartArgs),
+    Stop {
+        #[arg(long, default_value = "http://127.0.0.1:37421")]
+        daemon: String,
+    },
+    Restart(DaemonRestartArgs),
+}
+
+#[derive(Debug, Args)]
+struct DaemonStartArgs {
+    #[arg(long, default_value = "127.0.0.1:37421")]
+    listen: String,
+    #[arg(long)]
+    policy: Option<PathBuf>,
+    #[arg(long, default_value = ".agentfence/audit.sqlite")]
+    audit: PathBuf,
+    #[arg(long)]
+    foreground: bool,
+}
+
+#[derive(Debug, Args)]
+struct DaemonRestartArgs {
+    #[arg(long, default_value = "http://127.0.0.1:37421")]
+    daemon: String,
+    #[arg(long, default_value = "127.0.0.1:37421")]
+    listen: String,
+    #[arg(long)]
+    policy: Option<PathBuf>,
+    #[arg(long, default_value = ".agentfence/audit.sqlite")]
+    audit: PathBuf,
+    #[arg(long)]
+    foreground: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -676,6 +730,7 @@ fn run() -> Result<ExitCode> {
         Commands::Audit { command } => audit_command(command),
         Commands::Approvals { command } => approvals_command(command),
         Commands::Approve(args) => approve(args),
+        Commands::Daemon { command } => daemon_command(command),
         Commands::Filesystem { command } => filesystem_command(command),
         Commands::Network { command } => network_command(command),
         Commands::Skill { command } => skill_command(command),
@@ -1306,6 +1361,121 @@ fn approve(args: ApproveArgs) -> Result<ExitCode> {
     )?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(ExitCode::SUCCESS)
+}
+
+fn daemon_command(command: DaemonCommands) -> Result<ExitCode> {
+    match command {
+        DaemonCommands::Status { daemon } => {
+            let value = local_daemon_json(&daemon, "GET", "/health", None)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        DaemonCommands::Start(args) => start_daemon(args),
+        DaemonCommands::Stop { daemon } => {
+            let value = local_daemon_json(&daemon, "POST", "/shutdown", None)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        DaemonCommands::Restart(args) => {
+            match local_daemon_json(&args.daemon, "POST", "/shutdown", None) {
+                Ok(value) => eprintln!("stopped daemon: {}", serde_json::to_string(&value)?),
+                Err(error) => eprintln!("daemon stop skipped: {error}"),
+            }
+            thread::sleep(Duration::from_millis(500));
+            start_daemon(DaemonStartArgs {
+                listen: args.listen,
+                policy: args.policy,
+                audit: args.audit,
+                foreground: args.foreground,
+            })
+        }
+    }
+}
+
+fn start_daemon(args: DaemonStartArgs) -> Result<ExitCode> {
+    let executable = agentfenced_executable();
+    let mut command = Command::new(&executable);
+    command.arg("--listen").arg(&args.listen);
+    if let Some(policy) = args.policy {
+        command.arg("--policy").arg(policy);
+    }
+    command.arg("--audit").arg(args.audit);
+
+    if args.foreground {
+        let status = command
+            .status()
+            .with_context(|| format!("failed to run {}", executable.display()))?;
+        let code = status.code().unwrap_or(1);
+        return Ok(ExitCode::from(code as u8));
+    }
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_background_process(&mut command);
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to start {}", executable.display()))?;
+    let health = if wait_for_daemon_health(&args.listen, Duration::from_secs(3)) {
+        "ready"
+    } else {
+        "starting"
+    };
+    println!(
+        "started agentfenced pid={} listen={} status={health}",
+        child.id(),
+        args.listen
+    );
+    io::stdout()
+        .flush()
+        .context("failed to flush daemon start output")?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn configure_background_process(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+}
+
+fn wait_for_daemon_health(listen: &str, timeout: Duration) -> bool {
+    let base = daemon_base_from_listen(listen);
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if local_daemon_json(&base, "GET", "/health", None).is_ok() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+fn daemon_base_from_listen(listen: &str) -> String {
+    let authority = listen
+        .strip_prefix("0.0.0.0:")
+        .map(|port| format!("127.0.0.1:{port}"))
+        .unwrap_or_else(|| listen.to_string());
+    format!("http://{authority}")
+}
+
+fn agentfenced_executable() -> PathBuf {
+    let executable_name = if cfg!(windows) {
+        "agentfenced.exe"
+    } else {
+        "agentfenced"
+    };
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let candidate = parent.join(executable_name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from(executable_name)
 }
 
 fn policy_command(command: PolicyCommands) -> Result<ExitCode> {
