@@ -92,3 +92,11 @@ cargo test
 pnpm typecheck
 pnpm build
 ```
+
+Run the end-to-end smoke checks before release candidates and packaging work:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1
+```
+
+The smoke script builds the CLI and daemon, initializes a temporary policy, validates shell/filesystem/network/skill/MCP decisions, generates an agent wrapper, runs a guarded command, and verifies audit export.

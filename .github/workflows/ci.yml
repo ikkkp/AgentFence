@@ -15,6 +15,9 @@ jobs:
         run: cargo fmt --check
       - name: Test
         run: cargo test
+      - name: Smoke
+        shell: pwsh
+        run: ./scripts/smoke.ps1
       - name: Packaging scripts
         shell: pwsh
         run: |
