@@ -51,7 +51,8 @@ a {
   gap: 18px;
 }
 
-.hero {
+.hero,
+.doc-hero {
   align-items: center;
   display: grid;
   gap: 48px;
@@ -60,6 +61,11 @@ a {
   max-width: 1120px;
   min-height: 620px;
   padding: 42px 24px 84px;
+}
+
+.doc-hero {
+  min-height: 520px;
+  padding-bottom: 56px;
 }
 
 .eyebrow {
@@ -150,7 +156,8 @@ pre {
   margin: 0;
 }
 
-.features {
+.features,
+.doc-grid {
   display: grid;
   gap: 18px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -159,15 +166,26 @@ pre {
   padding: 0 24px 84px;
 }
 
+.doc-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-bottom: 48px;
+}
+
 .features article,
+.doc-card,
 .band {
   background: #ffffff;
   border: 1px solid #dfe6df;
   border-radius: 8px;
 }
 
-.features article {
+.features article,
+.doc-card {
   padding: 24px;
+}
+
+.doc-card {
+  display: block;
 }
 
 .feature-icon {
@@ -181,12 +199,14 @@ pre {
   width: 42px;
 }
 
-.features h2 {
+.features h2,
+.doc-card h2 {
   font-size: 22px;
   margin: 18px 0 10px;
 }
 
 .features p,
+.doc-card p,
 .page p,
 .page li {
   color: #53645a;
@@ -223,6 +243,13 @@ pre {
   gap: 10px;
 }
 
+.band a,
+.doc-list a,
+.page p a {
+  color: #1f6b39;
+  font-weight: 700;
+}
+
 .page {
   margin: 0 auto;
   max-width: 880px;
@@ -255,6 +282,14 @@ pre {
   margin-top: 0;
 }
 
+.doc-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .meta {
   color: #277045;
   font-size: 13px;
@@ -279,7 +314,9 @@ pre {
   }
 
   .hero,
+  .doc-hero,
   .features,
+  .doc-grid,
   .band {
     grid-template-columns: 1fr;
   }
