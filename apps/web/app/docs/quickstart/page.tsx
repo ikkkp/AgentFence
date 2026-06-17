@@ -13,6 +13,7 @@ export default function QuickstartPage() {
       <pre>{`agentfence init
 agentfence daemon start --listen 127.0.0.1:37421
 agentfence daemon status
+agentfence boundary inspect
 agentfence check -- git status
 agentfence run -- git status --short
 agentfence approvals list

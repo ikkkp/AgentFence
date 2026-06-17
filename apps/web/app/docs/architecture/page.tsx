@@ -26,8 +26,9 @@ AgentFence Daemon
       <h2>Components</h2>
       <ul>
         <li>`crates/agentfence-policy`: policy model, decisions, schema, policy bundles, suggestions, and simulation helpers.</li>
+        <li>`crates/agentfence-boundary`: diagnostic OS/proxy boundary inspection for policy, PATH, proxy env, helper tools, and sensitive-path signals.</li>
         <li>`crates/agentfence-cli`: daemon lifecycle controls, shell checks, guarded execution, MCP proxies, integration profiles, bundles, audits, and approvals.</li>
-        <li>`crates/agentfence-daemon`: local HTTP API for health, shutdown, policy, approvals, audit, filesystem, network, skill, MCP, and simulation checks.</li>
+        <li>`crates/agentfence-daemon`: local HTTP API for health, shutdown, policy, approvals, audit, boundary inspection, filesystem, network, skill, MCP, and simulation checks.</li>
         <li>`crates/agentfence-audit`: local SQLite audit persistence with secret redaction.</li>
         <li>`apps/desktop`: Tauri control plane for approvals, policy editing, audit review, MCP, skills, and settings.</li>
         <li>`apps/web`: this static project documentation site.</li>
@@ -43,6 +44,11 @@ AgentFence Daemon
         The local daemon can be managed with `agentfence daemon start`, `agentfence daemon status`,
         `agentfence daemon stop`, and `agentfence daemon restart`; the desktop app exposes the same default
         local start and stop flow.
+      </p>
+      <p>
+        `agentfence boundary inspect` and `GET /boundary/inspect` report OS/proxy helper availability and
+        sensitive local path signals. This is diagnostic only; it does not enable OS firewall, sandbox, or
+        network proxy enforcement by itself.
       </p>
       <p>
         Wrapper-mode shell control is conservative around nested interpreters and high-impact tooling:

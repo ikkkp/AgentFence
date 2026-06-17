@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use std::os::windows::process::CommandExt;
 
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditStore};
+use agentfence_boundary::{BoundaryReport, BoundarySeverity, BoundaryStatus, inspect_boundary};
 use agentfence_policy::{
     ActorPolicy, Decision, DecisionResult, FilesystemRequest, JsonPatchOperation, McpServerPolicy,
     NetworkRequest, Policy, PolicyBundle, PolicyBundleKeyPair, PolicyBundleSignature,
@@ -61,6 +62,10 @@ enum Commands {
         command: ApprovalCommands,
     },
     Approve(ApproveArgs),
+    Boundary {
+        #[command(subcommand)]
+        command: BoundaryCommands,
+    },
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
@@ -259,6 +264,22 @@ enum DaemonCommands {
         daemon: String,
     },
     Restart(DaemonRestartArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum BoundaryCommands {
+    Inspect {
+        #[arg(long, default_value = "markdown")]
+        format: BoundaryFormat,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BoundaryFormat {
+    Json,
+    Markdown,
 }
 
 #[derive(Debug, Args)]
@@ -739,6 +760,7 @@ fn run() -> Result<ExitCode> {
         Commands::Audit { command } => audit_command(command),
         Commands::Approvals { command } => approvals_command(command),
         Commands::Approve(args) => approve(args),
+        Commands::Boundary { command } => boundary_command(command),
         Commands::Daemon { command } => daemon_command(command),
         Commands::Filesystem { command } => filesystem_command(command),
         Commands::Network { command } => network_command(command),
@@ -1552,6 +1574,91 @@ fn approve(args: ApproveArgs) -> Result<ExitCode> {
     )?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(ExitCode::SUCCESS)
+}
+
+fn boundary_command(command: BoundaryCommands) -> Result<ExitCode> {
+    match command {
+        BoundaryCommands::Inspect { format, cwd } => {
+            let cwd = cwd
+                .map(Ok)
+                .unwrap_or_else(env::current_dir)
+                .context("failed to resolve inspection directory")?;
+            let report = inspect_boundary(&cwd);
+            match format {
+                BoundaryFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                BoundaryFormat::Markdown => println!("{}", boundary_report_markdown(&report)),
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn boundary_report_markdown(report: &BoundaryReport) -> String {
+    let mut output = String::new();
+    output.push_str("# AgentFence Boundary Report\n\n");
+    output.push_str(&format!(
+        "- OS: {} {}\n- Directory: {}\n\n",
+        report.os, report.arch, report.cwd
+    ));
+    output.push_str("| Check | Status | Severity | Detail |\n| --- | --- | --- | --- |\n");
+    for check in &report.checks {
+        output.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            escape_markdown_table(&check.title),
+            boundary_status_label(check.status),
+            boundary_severity_label(check.severity),
+            escape_markdown_table(&check.detail)
+        ));
+    }
+
+    output.push_str("\n## Tools\n\n");
+    for tool in &report.tools {
+        output.push_str(&format!(
+            "- [{}] {}\n",
+            if tool.available { "x" } else { " " },
+            tool.name
+        ));
+    }
+
+    output.push_str("\n## Sensitive Path Candidates\n\n");
+    for path in &report.sensitive_paths {
+        output.push_str(&format!(
+            "- [{}] {}: `{}`\n",
+            if path.exists { "x" } else { " " },
+            path.label,
+            path.path
+        ));
+    }
+
+    if !report.proxy_env.is_empty() {
+        output.push_str("\n## Proxy Environment\n\n");
+        output.push_str(&format!("{}\n", report.proxy_env.join(", ")));
+    }
+
+    if !report.recommendations.is_empty() {
+        output.push_str("\n## Recommendations\n\n");
+        for recommendation in &report.recommendations {
+            output.push_str(&format!("- {}\n", escape_markdown_table(recommendation)));
+        }
+    }
+    output
+}
+
+fn boundary_status_label(status: BoundaryStatus) -> &'static str {
+    match status {
+        BoundaryStatus::Configured => "configured",
+        BoundaryStatus::Available => "available",
+        BoundaryStatus::Advisory => "advisory",
+        BoundaryStatus::Missing => "missing",
+    }
+}
+
+fn boundary_severity_label(severity: BoundarySeverity) -> &'static str {
+    match severity {
+        BoundarySeverity::Info => "info",
+        BoundarySeverity::Medium => "medium",
+        BoundarySeverity::High => "high",
+    }
 }
 
 fn daemon_command(command: DaemonCommands) -> Result<ExitCode> {

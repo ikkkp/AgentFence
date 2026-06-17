@@ -32,10 +32,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentfence-boundary"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agentfence-cli"
 version = "0.1.0"
 dependencies = [
  "agentfence-audit",
+ "agentfence-boundary",
  "agentfence-mcp",
  "agentfence-policy",
  "agentfence-shell",
@@ -52,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "agentfence-approval",
  "agentfence-audit",
+ "agentfence-boundary",
  "agentfence-mcp",
  "agentfence-policy",
  "agentfence-shell",

@@ -7,6 +7,7 @@ use agentfence_approval::{
     ApprovalCreate, ApprovalQueue, ApprovalRequest, ApprovalResolve, ApprovalStatus,
 };
 use agentfence_audit::{AuditEvent, AuditExportFormat, AuditFilter, AuditStore};
+use agentfence_boundary::inspect_boundary;
 use agentfence_mcp::McpAccessRequest;
 use agentfence_policy::{
     Decision, DecisionResult, FilesystemRequest, NetworkRequest, Policy, PolicyBundle,
@@ -178,6 +179,7 @@ async fn main() -> Result<()> {
         .route("/policy/bundle/import", post(policy_bundle_import))
         .route("/audit", get(audit))
         .route("/audit/export", get(audit_export))
+        .route("/boundary/inspect", get(boundary_inspect))
         .route("/approvals", get(approvals).post(create_approval))
         .route("/approvals/:id", get(approval))
         .route("/approvals/:id/resolve", post(resolve_approval))
@@ -535,6 +537,14 @@ async fn skill_check(
         "decision": decision,
         "approval": approval
     })))
+}
+
+async fn boundary_inspect() -> Result<Json<Value>, ApiError> {
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let report = inspect_boundary(&cwd);
+    Ok(Json(
+        serde_json::to_value(report).context("failed to encode boundary report")?,
+    ))
 }
 
 async fn approvals(

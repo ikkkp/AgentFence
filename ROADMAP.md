@@ -27,6 +27,7 @@ As of the first repository implementation slice, AgentFence has working foundati
 - Milestone 7 integration docs: Codex, Claude Code, Cursor-style, and generic MCP wrapper profiles, per-agent setup guides, CLI wrapper installation, and optional PATH registration.
 - Milestone 8 foundations: signed policy bundles, verification, import, organization policy templates, audit export, and local audit reports.
 - Post-v0.1 daemon lifecycle: CLI start/status/stop/restart commands, daemon `POST /shutdown`, and desktop start/stop controls for the default local daemon.
+- Post-v0.1 boundary exploration: shared OS/proxy boundary inspector exposed through CLI and daemon diagnostics.
 
 Remaining hardening work is concentrated around raw-mode PTY shell interception for full-screen interactive programs, OS-level filesystem controls, full network proxying, open-ended non-JSON MCP stream filtering, richer policy authoring workflows, and optional team/cloud features.
 

@@ -34,6 +34,7 @@ The CLI lives in `crates/agentfence-cli`. It is the first enforcement entry poin
 - `run` checks a command, evaluates discovered network domains, asks for approval when needed, writes an audit event, and only then executes.
 - `logs` reads the local SQLite audit store.
 - `daemon start`, `daemon status`, `daemon stop`, and `daemon restart` manage the local daemon lifecycle.
+- `boundary inspect` reports policy, wrapper PATH, proxy environment, OS helper tools, and sensitive-path signals without enabling OS-level enforcement by itself.
 - `approvals list` and `approve` inspect and resolve daemon approval requests from the terminal.
 - `mcp check` evaluates MCP access decisions.
 - `integrations install` writes agent wrapper scripts and can optionally register the wrapper directory on the user PATH.
@@ -54,6 +55,7 @@ The daemon lives in `crates/agentfence-daemon`. It provides local HTTP APIs for 
 - `POST /policy/bundle/import`
 - `GET /audit?limit=50&actor=codex&decision=deny&action=shell.exec`
 - `GET /audit/export?format=csv`
+- `GET /boundary/inspect`
 - `GET /approvals?status=pending`
 - `GET /approvals/:id`
 - `POST /approvals`
@@ -94,6 +96,10 @@ The simulator evaluates hypothetical actions without creating approval requests 
 ### Policy Bundles
 
 Policy bundles are portable team-policy artifacts. They include the policy body, metadata, a SHA-256 digest, and optional Ed25519 signature. The daemon can export, verify, and import bundles through local endpoints, while the CLI exposes key generation, signing, verification, and import workflows for scripts.
+
+### Boundary Inspection
+
+Boundary inspection lives in `crates/agentfence-boundary` and is exposed through `agentfence boundary inspect` and `GET /boundary/inspect`. It detects project policy presence, wrapper PATH status, configured proxy environment variable names, available OS helper tools such as `netsh`, `pfctl`, `bwrap`, or `iptables`, and sensitive local path candidates. This is a diagnostic surface only; future enforcement profiles can use the report to bind OS firewall, sandbox, or proxy helpers deliberately.
 
 ## Current Enforcement Boundary
 

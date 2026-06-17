@@ -9,8 +9,8 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, daemon lifecycle controls, shell checks, guarded command execution, guarded shell and PTY shell modes, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
-- `agentfenced` local HTTP daemon with health, shutdown, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
+- `agentfence` CLI with policy initialization, validation, daemon lifecycle controls, OS/proxy boundary inspection, shell checks, guarded command execution, guarded shell and PTY shell modes, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
+- `agentfenced` local HTTP daemon with health, shutdown, policy, approval queue, audit, boundary inspection, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
 - Next.js website shell with homepage, download, security, changelog, blog, and docs pages.
@@ -140,6 +140,8 @@ agentfence integrations install codex --format powershell --output-dir .agentfen
 agentfence logs --limit 20
 agentfence audit export --format csv --output audit.csv
 agentfence audit report --format markdown --output audit-report.md
+agentfence boundary inspect
+agentfence boundary inspect --format json
 agentfence daemon status
 agentfence daemon start --listen 127.0.0.1:37421
 agentfence daemon stop

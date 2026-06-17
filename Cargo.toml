@@ -3,6 +3,7 @@ members = [
   "apps/desktop/src-tauri",
   "crates/agentfence-approval",
   "crates/agentfence-audit",
+  "crates/agentfence-boundary",
   "crates/agentfence-cli",
   "crates/agentfence-daemon",
   "crates/agentfence-mcp",

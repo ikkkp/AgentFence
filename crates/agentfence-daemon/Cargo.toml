@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 agentfence-approval = { path = "../agentfence-approval" }
 agentfence-audit = { path = "../agentfence-audit" }
+agentfence-boundary = { path = "../agentfence-boundary" }
 agentfence-mcp = { path = "../agentfence-mcp" }
 agentfence-policy = { path = "../agentfence-policy" }
 agentfence-shell = { path = "../agentfence-shell" }
