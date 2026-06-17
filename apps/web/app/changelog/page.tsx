@@ -2,6 +2,17 @@ import { sitePath } from "../site-path";
 
 const releases = [
   {
+    title: "v0.1.0",
+    date: "June 17, 2026",
+    items: [
+      "Released the first installable AgentFence CLI, daemon, desktop, and documentation bundle.",
+      "Added release smoke tests, integration profile verification, packaging manifests, and GitHub Release publishing.",
+      "Hardened shell risk classification for nested interpreters, repository rewrites, encoded PowerShell, remote install pipelines, and infrastructure commands.",
+      "Added MCP argument inspection, ask upgrades for high-risk arguments, and redacted CLI output for secret-like values.",
+      "Polished desktop daemon guidance, approval findings, and audit risk signals."
+    ]
+  },
+  {
     title: "Unreleased",
     date: "June 16, 2026",
     items: [

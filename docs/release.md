@@ -52,6 +52,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Use `docs/release-notes/v0.1.0.md` as the release body and update the website download page when a new version is published.
+
 The workflow builds:
 
 - `agentfence-windows-x64.zip`
