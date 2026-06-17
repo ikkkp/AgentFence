@@ -60,6 +60,8 @@ Pushes to `main` run `.github/workflows/pages.yml`, export the website as static
 https://ikkkp.github.io/AgentFence/
 ```
 
+For the first deployment, the repository owner must open GitHub repository settings, go to Pages, and set Build and deployment Source to GitHub Actions. GitHub Actions cannot create that Pages site with the default `GITHUB_TOKEN` when the repository has not enabled Pages yet.
+
 Build the same static export locally:
 
 ```powershell
