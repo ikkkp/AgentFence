@@ -34,6 +34,28 @@ type QuickRuleScope = "shell" | "network" | "skill";
 type QuickRuleDecision = "allow" | "ask" | "deny";
 type PolicyDiff = { hasChanges: boolean; summary: string; text: string };
 type DiffOperation = { type: "same" | "add" | "remove"; text: string };
+type BoundaryStatus = "configured" | "available" | "advisory" | "missing";
+type BoundarySeverity = "info" | "medium" | "high";
+type BoundaryCheck = {
+  id: string;
+  title: string;
+  status: BoundaryStatus;
+  severity: BoundarySeverity;
+  detail: string;
+  recommendation: string;
+};
+type BoundaryTool = { name: string; available: boolean };
+type BoundaryPath = { label: string; path: string; exists: boolean };
+type BoundaryReport = {
+  os: string;
+  arch: string;
+  cwd: string;
+  checks: BoundaryCheck[];
+  proxyEnv: string[];
+  tools: BoundaryTool[];
+  sensitivePaths: BoundaryPath[];
+  recommendations: string[];
+};
 
 const fallbackApprovals: ApprovalRequest[] = [
   {
@@ -127,6 +149,26 @@ const policyPreview = `{
   }
 }`;
 
+const fallbackBoundaryReport: BoundaryReport = {
+  os: "local",
+  arch: "unknown",
+  cwd: "not loaded",
+  checks: [
+    {
+      id: "daemon",
+      title: "Boundary report",
+      status: "advisory",
+      severity: "info",
+      detail: "Start the daemon to inspect OS and proxy boundary signals",
+      recommendation: "Use the local daemon controls, then refresh boundary diagnostics."
+    }
+  ],
+  proxyEnv: [],
+  tools: [],
+  sensitivePaths: [],
+  recommendations: []
+};
+
 function App() {
   const [daemonBase, setDaemonBase] = useState(DEFAULT_DAEMON_BASE);
   const [daemonBaseDraft, setDaemonBaseDraft] = useState(DEFAULT_DAEMON_BASE);
@@ -155,6 +197,8 @@ function App() {
   const [simulatorStatus, setSimulatorStatus] = useState("Ready");
   const [bundleDigest, setBundleDigest] = useState("not loaded");
   const [bundleSignature, setBundleSignature] = useState("not checked");
+  const [boundaryReport, setBoundaryReport] = useState<BoundaryReport>(fallbackBoundaryReport);
+  const [boundaryStatus, setBoundaryStatus] = useState("Boundary not loaded");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
   const policyDiff = useMemo(
     () => buildPolicyDiff(savedPolicyText, policyText),
@@ -174,6 +218,7 @@ function App() {
     refreshPolicy();
     refreshPolicySuggestions();
     refreshBundleDigest();
+    refreshBoundary();
     const timer = window.setInterval(() => {
       refreshApprovals();
     }, 5000);
@@ -206,7 +251,8 @@ function App() {
       refreshAudit(),
       refreshPolicy(),
       refreshPolicySuggestions(),
-      refreshBundleDigest()
+      refreshBundleDigest(),
+      refreshBoundary()
     ]);
   }
 
@@ -591,6 +637,22 @@ function App() {
     }
   }
 
+  async function refreshBoundary() {
+    setBoundaryStatus("Scanning boundary");
+    try {
+      const response = await fetch(`${daemonBase}/boundary/inspect`);
+      if (!response.ok) {
+        setBoundaryStatus("Boundary scan failed");
+        return;
+      }
+      setBoundaryReport((await response.json()) as BoundaryReport);
+      setBoundaryStatus("Boundary report loaded");
+    } catch {
+      setBoundaryReport(fallbackBoundaryReport);
+      setBoundaryStatus("Daemon offline");
+    }
+  }
+
   function applyDaemonBase() {
     const next = normalizeDaemonBase(daemonBaseDraft);
     setDaemonBaseDraft(next);
@@ -602,6 +664,10 @@ function App() {
     ...auditEvents.map((item) => item.actor)
   ]);
   const deniedCount = auditEvents.filter((item) => item.decision === "deny").length;
+  const boundaryAttentionCount = boundaryReport.checks.filter(
+    (check) => check.severity !== "info" && check.status !== "configured"
+  ).length;
+  const availableBoundaryTools = boundaryReport.tools.filter((tool) => tool.available).length;
 
   return (
     <main className="shell">
@@ -659,6 +725,7 @@ function App() {
           <Metric label="Active agents" value={String(activeAgents.size)} detail={Array.from(activeAgents).join(", ") || "none observed"} />
           <Metric label="Pending approvals" value={String(approvals.length)} detail={`${approvals.filter((item) => item.risk === "high").length} high risk`} />
           <Metric label="Denied recent" value={String(deniedCount)} detail="from local audit" />
+          <Metric label="Boundary signals" value={String(boundaryAttentionCount)} detail={`${availableBoundaryTools} tools available`} />
           <Metric label="Audit events" value={String(auditEvents.length)} detail="latest local rows" />
         </section>
 
@@ -931,6 +998,54 @@ function App() {
                 <a href={`${daemonBase}/audit/export?format=csv&limit=1000`}>Audit CSV</a>
                 <a href={`${daemonBase}/audit/export?format=json&limit=1000`}>Audit JSON</a>
                 <button onClick={refreshBundleDigest}>Refresh Bundle</button>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Boundary Diagnostics" icon={<Shield size={18} />}>
+            <div className="boundary-summary">
+              <div>
+                <span>{boundaryReport.os} / {boundaryReport.arch}</span>
+                <strong>{boundaryReport.cwd}</strong>
+              </div>
+              <button className="text-button" onClick={refreshBoundary}>
+                <RefreshCw size={15} />Refresh
+              </button>
+            </div>
+            <div className="status status-neutral">{boundaryStatus}</div>
+            <div className="boundary-check-list">
+              {boundaryReport.checks.map((check) => (
+                <article className="boundary-check" key={check.id}>
+                  <div>
+                    <span className={`boundary-pill boundary-${check.status}`}>{check.status}</span>
+                    <strong>{check.title}</strong>
+                    <p>{check.detail}</p>
+                  </div>
+                  <small className={`boundary-severity boundary-severity-${check.severity}`}>{check.severity}</small>
+                </article>
+              ))}
+            </div>
+            <div className="boundary-columns">
+              <div>
+                <span>Tools</span>
+                <div className="boundary-chip-list">
+                  {boundaryReport.tools.slice(0, 14).map((tool) => (
+                    <span className={`boundary-chip ${tool.available ? "boundary-chip-on" : ""}`} key={tool.name}>
+                      {tool.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span>Sensitive paths</span>
+                <div className="boundary-path-list">
+                  {boundaryReport.sensitivePaths.filter((path) => path.exists).slice(0, 6).map((path) => (
+                    <code key={`${path.label}-${path.path}`}>{path.label}: {path.path}</code>
+                  ))}
+                  {boundaryReport.sensitivePaths.every((path) => !path.exists) && (
+                    <small>No sensitive path candidates detected</small>
+                  )}
+                </div>
               </div>
             </div>
           </Panel>
