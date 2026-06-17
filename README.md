@@ -16,6 +16,7 @@ This repository now contains the first implementation slice from the roadmap:
 - Next.js website shell with homepage, download, security, changelog, blog, and docs pages.
 - CI workflow for Rust and web verification.
 - Release workflow for CLI, daemon, installer scripts, and Tauri desktop artifacts.
+- Security workflow with RustSec and critical-level npm advisory checks, plus Dependabot for Cargo, pnpm, and GitHub Actions.
 
 ## Repository Layout
 

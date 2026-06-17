@@ -1,0 +1,53 @@
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**/Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/security.yml"
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**/Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/security.yml"
+  schedule:
+    - cron: "21 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    name: RustSec advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-audit:
+    name: Critical npm advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Audit critical advisories
+        run: pnpm audit --audit-level critical --registry=https://registry.npmjs.org

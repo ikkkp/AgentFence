@@ -14,6 +14,7 @@ cargo fmt --check
 cargo test
 pnpm typecheck
 pnpm build
+pnpm audit --audit-level critical --registry=https://registry.npmjs.org
 ```
 
 Then run the product smoke suite:
@@ -80,6 +81,8 @@ cargo build --release --bin agentfence --bin agentfenced
 Each manifest records the release version, repository, commit, artifact size, and SHA256 digest. These manifests are not a replacement for future certificate-backed signing or notarization, but they give users a deterministic checksum to compare after download.
 
 Tag-triggered release builds attach CLI archives, checksum manifests, and desktop bundles to the GitHub release automatically.
+
+The security workflow also runs RustSec advisory checks and critical-level npm advisory checks on dependency changes, on a weekly schedule, and on manual dispatch. Dependabot opens weekly update pull requests for Cargo, pnpm, and GitHub Actions.
 
 After downloading a CLI archive, users can install the binaries onto PATH:
 
