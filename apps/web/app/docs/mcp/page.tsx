@@ -31,7 +31,8 @@ agentfence mcp check --server github --kind tool --name list_issues --arguments-
       <pre>{`agentfence mcp proxy --server github -- node path/to/github-mcp-server.js`}</pre>
       <p>
         The proxy enforces tools/call, resources/read, and prompts/get, filters denied list entries,
-        and can wait on the daemon approval queue with --ask-mode queue.
+        governs batch JSON-RPC requests without partial forwarding, and can wait on the daemon approval
+        queue with --ask-mode queue.
       </p>
       <h2>HTTP JSON-RPC proxy</h2>
       <pre>{`agentfence mcp http-proxy \\
@@ -40,8 +41,8 @@ agentfence mcp check --server github --kind tool --name list_issues --arguments-
   --upstream http://127.0.0.1:3000/mcp`}</pre>
       <p>
         The HTTP proxy applies the same checks to HTTP POST JSON-RPC bodies, filters denied list entries
-        from complete JSON, chunked JSON, and SSE list responses, and passes other streaming responses through after
-        request-level checks.
+        from complete JSON, chunked JSON, batch, and SSE list responses, and passes other streaming responses
+        through after request-level checks.
       </p>
       <h2>Rate limits</h2>
       <p>

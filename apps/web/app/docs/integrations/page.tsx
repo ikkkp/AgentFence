@@ -51,6 +51,7 @@ agentfence mcp http-proxy \\
   --upstream http://127.0.0.1:3000/mcp`}</pre>
       <p>
         `--ask-mode queue` sends ask decisions to the daemon so the desktop approval queue can resolve them.
+        The HTTP proxy also governs batch JSON-RPC bodies and list-response filtering by request id.
       </p>
       <p><a href={sitePath("/docs/integrations/generic-mcp")}>Open Generic MCP guide</a></p>
     </main>

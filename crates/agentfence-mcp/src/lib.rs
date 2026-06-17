@@ -16,6 +16,12 @@ pub struct McpAccessRequest {
     pub arguments: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct McpClientInspection {
+    pub request: McpAccessRequest,
+    pub message: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpAccessDecision {
@@ -335,6 +341,28 @@ pub fn inspect_client_message(server: &str, message: &Value) -> Option<McpAccess
     }
 }
 
+pub fn inspect_client_messages(server: &str, message: &Value) -> Vec<McpClientInspection> {
+    match message {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                inspect_client_message(server, item).map(|request| McpClientInspection {
+                    request,
+                    message: item.clone(),
+                })
+            })
+            .collect(),
+        _ => inspect_client_message(server, message)
+            .map(|request| {
+                vec![McpClientInspection {
+                    request,
+                    message: message.clone(),
+                }]
+            })
+            .unwrap_or_default(),
+    }
+}
+
 pub fn list_method(message: &Value) -> Option<&'static str> {
     match message.get("method")?.as_str()? {
         "tools/list" => Some("tools/list"),
@@ -342,6 +370,25 @@ pub fn list_method(message: &Value) -> Option<&'static str> {
         "prompts/list" => Some("prompts/list"),
         _ => None,
     }
+}
+
+pub fn list_methods(message: &Value) -> Vec<(String, String)> {
+    fn push_list_method(methods: &mut Vec<(String, String)>, message: &Value) {
+        if let (Some(method), Some(id)) = (list_method(message), message_id_key(message)) {
+            methods.push((id, method.to_string()));
+        }
+    }
+
+    let mut methods = Vec::new();
+    match message {
+        Value::Array(items) => {
+            for item in items {
+                push_list_method(&mut methods, item);
+            }
+        }
+        _ => push_list_method(&mut methods, message),
+    }
+    methods
 }
 
 pub fn message_id_key(message: &Value) -> Option<String> {
@@ -402,6 +449,59 @@ pub fn filter_list_response(
     ListFilterResult {
         response: filtered,
         removed,
+    }
+}
+
+pub fn filter_list_responses(
+    policy: &Policy,
+    server: &str,
+    methods_by_id: &HashMap<String, String>,
+    response: &Value,
+) -> ListFilterResult {
+    if methods_by_id.is_empty() {
+        return ListFilterResult {
+            response: response.clone(),
+            removed: 0,
+        };
+    }
+
+    match response {
+        Value::Array(items) => {
+            let mut removed = 0_usize;
+            let items = items
+                .iter()
+                .map(|item| {
+                    let Some(id) = message_id_key(item) else {
+                        return item.clone();
+                    };
+                    let Some(method) = methods_by_id.get(&id) else {
+                        return item.clone();
+                    };
+                    let filtered = filter_list_response(policy, server, method, item);
+                    removed += filtered.removed;
+                    filtered.response
+                })
+                .collect();
+            ListFilterResult {
+                response: Value::Array(items),
+                removed,
+            }
+        }
+        _ => {
+            let Some(id) = message_id_key(response) else {
+                return ListFilterResult {
+                    response: response.clone(),
+                    removed: 0,
+                };
+            };
+            let Some(method) = methods_by_id.get(&id) else {
+                return ListFilterResult {
+                    response: response.clone(),
+                    removed: 0,
+                };
+            };
+            filter_list_response(policy, server, method, response)
+        }
     }
 }
 
@@ -516,7 +616,7 @@ fn list_shape(method: &str) -> Option<(&'static str, &'static str, &'static str)
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::io::Cursor;
 
     use agentfence_policy::{Decision, McpServerPolicy, Policy, RateLimitPolicy};
@@ -538,6 +638,41 @@ mod tests {
         let request = inspect_client_message("github", &message).expect("request");
         assert_eq!(request.kind, "tool");
         assert_eq!(request.name, "create_pull_request");
+    }
+
+    #[test]
+    fn inspects_batch_tool_call_messages() {
+        let message = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "create_pull_request",
+                    "arguments": { "title": "demo" }
+                }
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": "resource",
+                "method": "resources/read",
+                "params": {
+                    "uri": "file:///tmp/demo.txt"
+                }
+            }
+        ]);
+
+        let requests = inspect_client_messages("github", &message);
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].request.kind, "tool");
+        assert_eq!(requests[0].request.name, "create_pull_request");
+        assert_eq!(requests[1].request.kind, "resource");
+        assert_eq!(requests[1].request.name, "file:///tmp/demo.txt");
     }
 
     #[test]
@@ -644,6 +779,79 @@ mod tests {
         assert_eq!(filtered.removed, 1);
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "list_pull_requests");
+    }
+
+    #[test]
+    fn tracks_batch_list_methods() {
+        let message = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list"
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": "resources",
+                "method": "resources/list"
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }
+        ]);
+
+        let methods = list_methods(&message);
+
+        assert_eq!(
+            methods,
+            vec![
+                ("n:1".to_string(), "tools/list".to_string()),
+                ("s:resources".to_string(), "resources/list".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_batch_list_responses_by_id() {
+        let mut tools = BTreeMap::new();
+        tools.insert("merge_pull_request".to_string(), Decision::Deny);
+        tools.insert("list_pull_requests".to_string(), Decision::Allow);
+
+        let mut policy = Policy::default();
+        policy.mcp.servers.insert(
+            "github".to_string(),
+            McpServerPolicy {
+                tools,
+                ..McpServerPolicy::default()
+            },
+        );
+        let methods = HashMap::from([("n:1".to_string(), "tools/list".to_string())]);
+        let response = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "tools": [
+                        { "name": "list_pull_requests" },
+                        { "name": "merge_pull_request" }
+                    ]
+                }
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "ok": true }
+            }
+        ]);
+
+        let filtered = filter_list_responses(&policy, "github", &methods, &response);
+        let responses = filtered.response.as_array().expect("batch");
+        let tools = responses[0]["result"]["tools"].as_array().expect("tools");
+
+        assert_eq!(filtered.removed, 1);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "list_pull_requests");
+        assert_eq!(responses[1], response[1]);
     }
 
     #[test]

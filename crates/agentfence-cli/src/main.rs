@@ -3601,11 +3601,18 @@ struct SimpleHttpResponse {
     body: Vec<u8>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct HttpListStreamFilter<'a> {
     policy: &'a Policy,
     server: &'a str,
-    method: &'a str,
+    methods_by_id: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+struct McpCheckedRequest {
+    message: serde_json::Value,
+    decision: agentfence_mcp::McpAccessDecision,
+    denial_decision: Option<DecisionResult>,
 }
 
 fn mcp_http_proxy(args: McpHttpProxyArgs) -> Result<ExitCode> {
@@ -3713,67 +3720,34 @@ fn handle_mcp_http_connection(
             );
         }
     };
-    let list_method = agentfence_mcp::list_method(&message).map(str::to_string);
+    let list_methods_by_id: HashMap<String, String> =
+        agentfence_mcp::list_methods(&message).into_iter().collect();
 
-    if let Some(request_to_check) = agentfence_mcp::inspect_client_message(&args.server, &message) {
-        let decision = agentfence_mcp::decide(policy, request_to_check);
-        let allowed = match decision.decision.decision {
-            Decision::Allow
-            | Decision::AllowOnce
-            | Decision::AllowForSession
-            | Decision::AllowWithConstraints => true,
-            Decision::Ask => matches!(args.ask_mode, McpAskMode::Allow),
-            Decision::Deny => false,
-        };
-        let allowed = if decision.decision.decision == Decision::Ask
-            && matches!(args.ask_mode, McpAskMode::Queue)
-        {
-            wait_for_mcp_approval(
-                &args.daemon,
-                args.ask_timeout_seconds,
-                &decision.request,
-                decision.decision.clone(),
-            )?
-        } else {
-            allowed
-        };
-        let mut denial_decision = decision.decision.clone();
-        let allowed = if allowed {
+    let mut checked = check_mcp_client_messages(
+        &args.server,
+        &message,
+        policy,
+        args.ask_mode,
+        &args.daemon,
+        args.ask_timeout_seconds,
+    )?;
+    if !checked.is_empty() {
+        if mcp_checked_requests_allowed(&checked) {
             let mut limiter = rate_limiter
                 .lock()
                 .map_err(|_| anyhow::anyhow!("MCP HTTP rate limiter lock poisoned"))?;
-            if let Some(rate_limit_decision) = limiter.check(&decision.request) {
-                denial_decision = rate_limit_decision;
-                false
-            } else {
-                true
+            let mut candidate = limiter.clone();
+            apply_mcp_rate_limits(&mut checked, &mut candidate);
+            if mcp_checked_requests_allowed(&checked) {
+                *limiter = candidate;
             }
-        } else {
-            false
-        };
-        append_mcp_audit_for_path(
-            audit_path,
-            &decision.request,
-            if allowed {
-                &decision.decision
-            } else {
-                &denial_decision
-            },
-            allowed,
-        )?;
-
-        if !allowed {
-            let body = agentfence_mcp::error_response(
-                &message,
-                -32001,
-                format!(
-                    "AgentFence denied MCP {} {}/{}: {}",
-                    decision.request.kind,
-                    decision.request.server,
-                    decision.request.name,
-                    denial_decision.reason
-                ),
-            );
+        }
+        let batch_allowed = mcp_checked_requests_allowed(&checked);
+        for item in &checked {
+            append_mcp_checked_audit_for_path(audit_path, item, batch_allowed)?;
+        }
+        if !batch_allowed {
+            let body = mcp_denied_response_body(&message, &checked);
             return write_http_response(
                 stream,
                 200,
@@ -3783,28 +3757,30 @@ fn handle_mcp_http_connection(
         }
     }
 
-    let stream_filter = list_method.as_deref().map(|method| HttpListStreamFilter {
+    let stream_filter = (!list_methods_by_id.is_empty()).then(|| HttpListStreamFilter {
         policy,
         server: &args.server,
-        method,
+        methods_by_id: list_methods_by_id.clone(),
     });
+
+    let list_method_label = describe_list_methods(&list_methods_by_id);
 
     match forward_http_request(upstream, &request, stream, stream_filter)? {
         ForwardedHttpResponse::Complete(mut response) => {
-            if let Some(method) = list_method {
+            if !list_methods_by_id.is_empty() {
                 if let Ok(response_json) =
                     serde_json::from_slice::<serde_json::Value>(&response.body)
                 {
-                    let filtered = agentfence_mcp::filter_list_response(
+                    let filtered = agentfence_mcp::filter_list_responses(
                         policy,
                         &args.server,
-                        &method,
+                        &list_methods_by_id,
                         &response_json,
                     );
                     if filtered.removed > 0 {
                         eprintln!(
                             "agentfence mcp http-proxy: filtered {} item(s) from {}",
-                            filtered.removed, method
+                            filtered.removed, list_method_label
                         );
                     }
                     response.body = serde_json::to_vec(&filtered.response)?;
@@ -3947,7 +3923,7 @@ fn forward_http_request(
                         client,
                         filter.policy,
                         filter.server,
-                        filter.method,
+                        &filter.methods_by_id,
                     )?
                 } else {
                     filter_sse_list_stream(
@@ -3955,13 +3931,14 @@ fn forward_http_request(
                         client,
                         filter.policy,
                         filter.server,
-                        filter.method,
+                        &filter.methods_by_id,
                     )?
                 };
                 if removed > 0 {
+                    let methods = describe_list_methods(&filter.methods_by_id);
                     eprintln!(
                         "agentfence mcp http-proxy: filtered {removed} streamed item(s) from {}",
-                        filter.method
+                        methods
                     );
                 }
                 client
@@ -3975,12 +3952,17 @@ fn forward_http_request(
                 chunked
                     .read_to_end(&mut body)
                     .context("failed to read chunked JSON list response")?;
-                let removed =
-                    filter_list_json_body(&mut body, filter.policy, filter.server, filter.method)?;
+                let removed = filter_list_json_body(
+                    &mut body,
+                    filter.policy,
+                    filter.server,
+                    &filter.methods_by_id,
+                )?;
                 if removed > 0 {
+                    let methods = describe_list_methods(&filter.methods_by_id);
                     eprintln!(
                         "agentfence mcp http-proxy: filtered {removed} chunked item(s) from {}",
-                        filter.method
+                        methods
                     );
                 }
                 let content_type = header_value(&headers, "content-type")
@@ -4169,12 +4151,13 @@ fn filter_list_json_body(
     body: &mut Vec<u8>,
     policy: &Policy,
     server: &str,
-    method: &str,
+    methods_by_id: &HashMap<String, String>,
 ) -> Result<usize> {
     let Ok(response_json) = serde_json::from_slice::<serde_json::Value>(body) else {
         return Ok(0);
     };
-    let filtered = agentfence_mcp::filter_list_response(policy, server, method, &response_json);
+    let filtered =
+        agentfence_mcp::filter_list_responses(policy, server, methods_by_id, &response_json);
     if filtered.removed > 0 {
         *body = serde_json::to_vec(&filtered.response)?;
     }
@@ -4186,7 +4169,7 @@ fn filter_sse_list_stream<R, W>(
     writer: &mut W,
     policy: &Policy,
     server: &str,
-    method: &str,
+    methods_by_id: &HashMap<String, String>,
 ) -> Result<usize>
 where
     R: BufRead,
@@ -4204,7 +4187,7 @@ where
         if read == 0 {
             if !event_lines.is_empty() {
                 removed_total +=
-                    write_filtered_sse_event(writer, &event_lines, policy, server, method)?;
+                    write_filtered_sse_event(writer, &event_lines, policy, server, methods_by_id)?;
             }
             break;
         }
@@ -4212,7 +4195,7 @@ where
         let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
         if trimmed.is_empty() {
             removed_total +=
-                write_filtered_sse_event(writer, &event_lines, policy, server, method)?;
+                write_filtered_sse_event(writer, &event_lines, policy, server, methods_by_id)?;
             event_lines.clear();
         } else {
             event_lines.push(trimmed);
@@ -4227,7 +4210,7 @@ fn write_filtered_sse_event<W>(
     lines: &[String],
     policy: &Policy,
     server: &str,
-    method: &str,
+    methods_by_id: &HashMap<String, String>,
 ) -> Result<usize>
 where
     W: Write,
@@ -4246,7 +4229,8 @@ where
         .join("\n");
     if !data.is_empty() {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) {
-            let filtered = agentfence_mcp::filter_list_response(policy, server, method, &value);
+            let filtered =
+                agentfence_mcp::filter_list_responses(policy, server, methods_by_id, &value);
             if filtered.removed > 0 {
                 for line in lines.iter().filter(|line| sse_data_value(line).is_none()) {
                     writer
@@ -4586,30 +4570,25 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
         while let Some(frame) = agentfence_mcp::read_frame(&mut reader)? {
             let frame = match agentfence_mcp::decode_frame_json(&frame) {
                 Ok(message) => {
-                    if let Some(id) = agentfence_mcp::message_id_key(&message) {
-                        let method = upstream_pending
-                            .lock()
-                            .map_err(|_| anyhow::anyhow!("MCP request map lock poisoned"))?
-                            .remove(&id);
-                        if let Some(method) = method {
-                            let filtered = agentfence_mcp::filter_list_response(
-                                &policy_for_upstream,
-                                &server_for_upstream,
-                                &method,
-                                &message,
-                            );
-                            if filtered.removed > 0 {
-                                eprintln!(
-                                    "agentfence mcp proxy: filtered {} item(s) from {}",
-                                    filtered.removed, method
-                                );
-                            }
-                            agentfence_mcp::frame_from_json(frame.kind, &filtered.response)?
-                        } else {
-                            frame
-                        }
-                    } else {
+                    let methods_by_id =
+                        take_pending_list_methods(&message, upstream_pending.as_ref())?;
+                    if methods_by_id.is_empty() {
                         frame
+                    } else {
+                        let filtered = agentfence_mcp::filter_list_responses(
+                            &policy_for_upstream,
+                            &server_for_upstream,
+                            &methods_by_id,
+                            &message,
+                        );
+                        if filtered.removed > 0 {
+                            eprintln!(
+                                "agentfence mcp proxy: filtered {} item(s) from {}",
+                                filtered.removed,
+                                describe_list_methods(&methods_by_id)
+                            );
+                        }
+                        agentfence_mcp::frame_from_json(frame.kind, &filtered.response)?
                     }
                 }
                 Err(_) => frame,
@@ -4635,77 +4614,37 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
             }
         };
 
-        let Some(request) = agentfence_mcp::inspect_client_message(&args.server, &message) else {
-            if let (Some(method), Some(id)) = (
-                agentfence_mcp::list_method(&message),
-                agentfence_mcp::message_id_key(&message),
-            ) {
-                pending_list_requests
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("MCP request map lock poisoned"))?
-                    .insert(id, method.to_string());
-            }
+        let mut checked = check_mcp_client_messages(
+            &args.server,
+            &message,
+            &policy,
+            args.ask_mode,
+            &args.daemon,
+            args.ask_timeout_seconds,
+        )?;
+        if checked.is_empty() {
+            track_mcp_list_requests(&message, pending_list_requests.as_ref())?;
             agentfence_mcp::write_frame(&mut upstream_stdin, &frame)?;
             continue;
-        };
+        }
 
-        let decision = agentfence_mcp::decide(&policy, request);
-        let allowed = match decision.decision.decision {
-            Decision::Allow
-            | Decision::AllowOnce
-            | Decision::AllowForSession
-            | Decision::AllowWithConstraints => true,
-            Decision::Ask => matches!(args.ask_mode, McpAskMode::Allow),
-            Decision::Deny => false,
-        };
-        let allowed = if decision.decision.decision == Decision::Ask
-            && matches!(args.ask_mode, McpAskMode::Queue)
-        {
-            wait_for_mcp_approval(
-                &args.daemon,
-                args.ask_timeout_seconds,
-                &decision.request,
-                decision.decision.clone(),
-            )?
-        } else {
-            allowed
-        };
-        let mut denial_decision = decision.decision.clone();
-        let allowed = if allowed {
-            if let Some(rate_limit_decision) = rate_limiter.check(&decision.request) {
-                denial_decision = rate_limit_decision;
-                false
-            } else {
-                true
+        if mcp_checked_requests_allowed(&checked) {
+            let mut candidate = rate_limiter.clone();
+            apply_mcp_rate_limits(&mut checked, &mut candidate);
+            if mcp_checked_requests_allowed(&checked) {
+                rate_limiter = candidate;
             }
-        } else {
-            false
-        };
-        append_mcp_audit(
-            audit_store.as_ref(),
-            &decision.request,
-            if allowed {
-                &decision.decision
-            } else {
-                &denial_decision
-            },
-            allowed,
-        )?;
+        }
+        let batch_allowed = mcp_checked_requests_allowed(&checked);
+        for item in &checked {
+            append_mcp_checked_audit(audit_store.as_ref(), item, batch_allowed)?;
+        }
 
-        if allowed {
+        if batch_allowed {
+            track_mcp_list_requests(&message, pending_list_requests.as_ref())?;
             agentfence_mcp::write_frame(&mut upstream_stdin, &frame)?;
         } else {
-            let response = agentfence_mcp::error_response(
-                &message,
-                -32001,
-                format!(
-                    "AgentFence denied MCP {} {}/{}: {}",
-                    decision.request.kind,
-                    decision.request.server,
-                    decision.request.name,
-                    denial_decision.reason
-                ),
-            );
+            let response = mcp_denied_response_body(&message, &checked);
             let response_frame = agentfence_mcp::frame_from_json(frame.kind, &response)?;
             let mut client_stdout = shared_stdout
                 .lock()
@@ -4877,6 +4816,239 @@ fn sensitive_json_value(value: &str) -> bool {
         || trimmed.starts_with("ASIA")
 }
 
+fn check_mcp_client_messages(
+    server: &str,
+    message: &serde_json::Value,
+    policy: &Policy,
+    ask_mode: McpAskMode,
+    daemon: &str,
+    ask_timeout_seconds: u64,
+) -> Result<Vec<McpCheckedRequest>> {
+    let inspections = agentfence_mcp::inspect_client_messages(server, message);
+    let mut checked = Vec::with_capacity(inspections.len());
+
+    for inspection in inspections {
+        let agentfence_mcp::McpClientInspection { request, message } = inspection;
+        let decision = agentfence_mcp::decide(policy, request);
+        let mut allowed = mcp_decision_allows(&decision.decision, ask_mode);
+        if decision.decision.decision == Decision::Ask && matches!(ask_mode, McpAskMode::Queue) {
+            allowed = wait_for_mcp_approval(
+                daemon,
+                ask_timeout_seconds,
+                &decision.request,
+                decision.decision.clone(),
+            )?;
+        }
+        let denial_decision = (!allowed).then(|| decision.decision.clone());
+        checked.push(McpCheckedRequest {
+            message,
+            decision,
+            denial_decision,
+        });
+    }
+
+    Ok(checked)
+}
+
+fn mcp_decision_allows(decision: &DecisionResult, ask_mode: McpAskMode) -> bool {
+    match decision.decision {
+        Decision::Allow
+        | Decision::AllowOnce
+        | Decision::AllowForSession
+        | Decision::AllowWithConstraints => true,
+        Decision::Ask => matches!(ask_mode, McpAskMode::Allow),
+        Decision::Deny => false,
+    }
+}
+
+fn apply_mcp_rate_limits(
+    checked: &mut [McpCheckedRequest],
+    limiter: &mut agentfence_mcp::McpRateLimiter,
+) {
+    for item in checked
+        .iter_mut()
+        .filter(|item| item.denial_decision.is_none())
+    {
+        if let Some(rate_limit_decision) = limiter.check(&item.decision.request) {
+            item.denial_decision = Some(rate_limit_decision);
+        }
+    }
+}
+
+fn mcp_checked_requests_allowed(checked: &[McpCheckedRequest]) -> bool {
+    checked.iter().all(|item| item.denial_decision.is_none())
+}
+
+fn append_mcp_checked_audit(
+    store: Option<&AuditStore>,
+    item: &McpCheckedRequest,
+    batch_allowed: bool,
+) -> Result<()> {
+    if batch_allowed {
+        append_mcp_audit(store, &item.decision.request, &item.decision.decision, true)
+    } else if let Some(denial_decision) = &item.denial_decision {
+        append_mcp_audit(store, &item.decision.request, denial_decision, false)
+    } else {
+        let denial_decision = mcp_batch_blocked_decision(&item.decision.decision);
+        append_mcp_audit(store, &item.decision.request, &denial_decision, false)
+    }
+}
+
+fn append_mcp_checked_audit_for_path(
+    path: Option<&Path>,
+    item: &McpCheckedRequest,
+    batch_allowed: bool,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let store = AuditStore::open(path)?;
+    append_mcp_checked_audit(Some(&store), item, batch_allowed)
+}
+
+fn mcp_batch_blocked_decision(base: &DecisionResult) -> DecisionResult {
+    DecisionResult {
+        decision: Decision::Deny,
+        reason: "MCP batch denied because another request in the batch was denied".to_string(),
+        matched_rule: Some("mcp.batch".to_string()),
+        risk: base.risk,
+    }
+}
+
+fn mcp_denied_response_body(
+    original: &serde_json::Value,
+    checked: &[McpCheckedRequest],
+) -> serde_json::Value {
+    if let serde_json::Value::Array(items) = original {
+        let mut denied_by_id = HashMap::new();
+        let mut fallback_messages = Vec::new();
+        for item in checked {
+            let Some(denial_decision) = item.denial_decision.as_ref() else {
+                continue;
+            };
+            let message = mcp_denied_error_message(&item.decision, denial_decision);
+            if let Some(id) = agentfence_mcp::message_id_key(&item.message) {
+                denied_by_id.insert(id, message.clone());
+            }
+            fallback_messages.push((item.message.clone(), message));
+        }
+
+        let mut errors = Vec::new();
+        for item in items {
+            if item.get("id").is_none() {
+                continue;
+            }
+            let message = agentfence_mcp::message_id_key(item)
+                .and_then(|id| denied_by_id.get(&id).cloned())
+                .unwrap_or_else(|| {
+                    "AgentFence denied MCP batch because another request in the batch was denied"
+                        .to_string()
+                });
+            errors.push(agentfence_mcp::error_response(item, -32001, message));
+        }
+        if errors.is_empty() {
+            errors.extend(
+                fallback_messages.into_iter().map(|(message, reason)| {
+                    agentfence_mcp::error_response(&message, -32001, reason)
+                }),
+            );
+        }
+        return serde_json::Value::Array(errors);
+    }
+
+    let (message, reason) = checked
+        .iter()
+        .find_map(|item| {
+            item.denial_decision.as_ref().map(|denial_decision| {
+                (
+                    item.message.clone(),
+                    mcp_denied_error_message(&item.decision, denial_decision),
+                )
+            })
+        })
+        .unwrap_or_else(|| {
+            (
+                original.clone(),
+                "AgentFence denied MCP request before forwarding".to_string(),
+            )
+        });
+    agentfence_mcp::error_response(&message, -32001, reason)
+}
+
+fn mcp_denied_error_message(
+    decision: &agentfence_mcp::McpAccessDecision,
+    denial_decision: &DecisionResult,
+) -> String {
+    format!(
+        "AgentFence denied MCP {} {}/{}: {}",
+        decision.request.kind,
+        decision.request.server,
+        decision.request.name,
+        denial_decision.reason
+    )
+}
+
+fn json_rpc_id_keys(message: &serde_json::Value) -> Vec<String> {
+    match message {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(agentfence_mcp::message_id_key)
+            .collect(),
+        _ => agentfence_mcp::message_id_key(message)
+            .map(|id| vec![id])
+            .unwrap_or_default(),
+    }
+}
+
+fn track_mcp_list_requests(
+    message: &serde_json::Value,
+    pending: &Mutex<HashMap<String, String>>,
+) -> Result<()> {
+    let methods = agentfence_mcp::list_methods(message);
+    if methods.is_empty() {
+        return Ok(());
+    }
+    let mut pending = pending
+        .lock()
+        .map_err(|_| anyhow::anyhow!("MCP request map lock poisoned"))?;
+    for (id, method) in methods {
+        pending.insert(id, method);
+    }
+    Ok(())
+}
+
+fn take_pending_list_methods(
+    message: &serde_json::Value,
+    pending: &Mutex<HashMap<String, String>>,
+) -> Result<HashMap<String, String>> {
+    let ids = json_rpc_id_keys(message);
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut pending = pending
+        .lock()
+        .map_err(|_| anyhow::anyhow!("MCP request map lock poisoned"))?;
+    let mut methods = HashMap::new();
+    for id in ids {
+        if let Some(method) = pending.remove(&id) {
+            methods.insert(id, method);
+        }
+    }
+    Ok(methods)
+}
+
+fn describe_list_methods(methods_by_id: &HashMap<String, String>) -> String {
+    let mut methods = methods_by_id.values().cloned().collect::<Vec<_>>();
+    methods.sort();
+    methods.dedup();
+    if methods.is_empty() {
+        "list response".to_string()
+    } else {
+        methods.join(", ")
+    }
+}
+
 fn wait_for_mcp_approval(
     daemon: &str,
     timeout_seconds: u64,
@@ -4949,19 +5121,6 @@ fn append_mcp_audit(
         "decision": decision.decision
     });
     store.append(&event)
-}
-
-fn append_mcp_audit_for_path(
-    path: Option<&Path>,
-    request: &agentfence_mcp::McpAccessRequest,
-    decision: &DecisionResult,
-    allowed: bool,
-) -> Result<()> {
-    let Some(path) = path else {
-        return Ok(());
-    };
-    let store = AuditStore::open(path)?;
-    append_mcp_audit(Some(&store), request, decision, allowed)
 }
 
 fn resolve_policy_path(explicit: Option<&Path>, cwd: &Path) -> Result<PathBuf> {
@@ -5100,10 +5259,10 @@ mod tests {
         );
         let mut reader = BufReader::new(std::io::Cursor::new(event_stream.into_bytes()));
         let mut output = Vec::new();
+        let methods = HashMap::from([("n:1".to_string(), "tools/list".to_string())]);
 
-        let removed =
-            filter_sse_list_stream(&mut reader, &mut output, &policy, "github", "tools/list")
-                .expect("filter");
+        let removed = filter_sse_list_stream(&mut reader, &mut output, &policy, "github", &methods)
+            .expect("filter");
         let output = String::from_utf8(output).expect("utf8");
 
         assert_eq!(removed, 1);
@@ -5133,10 +5292,10 @@ mod tests {
             ChunkedBodyReader::new(BufReader::new(std::io::Cursor::new(chunked.into_bytes())));
         let mut reader = BufReader::new(chunked_reader);
         let mut output = Vec::new();
+        let methods = HashMap::from([("n:1".to_string(), "tools/list".to_string())]);
 
-        let removed =
-            filter_sse_list_stream(&mut reader, &mut output, &policy, "github", "tools/list")
-                .expect("filter");
+        let removed = filter_sse_list_stream(&mut reader, &mut output, &policy, "github", &methods)
+            .expect("filter");
         let output = String::from_utf8(output).expect("utf8");
 
         assert_eq!(removed, 1);
@@ -5158,9 +5317,10 @@ mod tests {
             }
         }))
         .expect("json");
+        let methods = HashMap::from([("n:1".to_string(), "tools/list".to_string())]);
 
         let removed =
-            filter_list_json_body(&mut body, &policy, "github", "tools/list").expect("filter");
+            filter_list_json_body(&mut body, &policy, "github", &methods).expect("filter");
         let body = String::from_utf8(body).expect("utf8");
 
         assert_eq!(removed, 1);
@@ -5186,6 +5346,73 @@ mod tests {
         assert!(output.contains("Connection: close"));
         assert!(!output.contains("Transfer-Encoding"));
         assert!(!output.contains("Content-Length"));
+    }
+
+    #[test]
+    fn denied_batch_response_returns_errors_for_all_request_ids() {
+        let original = serde_json::json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "merge_pull_request",
+                    "arguments": {}
+                }
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }
+        ]);
+        let checked = vec![McpCheckedRequest {
+            message: original[0].clone(),
+            decision: agentfence_mcp::McpAccessDecision {
+                request: agentfence_mcp::McpAccessRequest {
+                    server: "github".to_string(),
+                    kind: "tool".to_string(),
+                    name: "merge_pull_request".to_string(),
+                    arguments: serde_json::Value::Null,
+                },
+                decision: DecisionResult {
+                    decision: Decision::Deny,
+                    reason: "denied by policy".to_string(),
+                    matched_rule: Some("mcp.servers.github.tools".to_string()),
+                    risk: agentfence_policy::Risk::High,
+                },
+                argument_inspection: agentfence_mcp::McpArgumentInspection::default(),
+            },
+            denial_decision: Some(DecisionResult {
+                decision: Decision::Deny,
+                reason: "denied by policy".to_string(),
+                matched_rule: Some("mcp.servers.github.tools".to_string()),
+                risk: agentfence_policy::Risk::High,
+            }),
+        }];
+
+        let response = mcp_denied_response_body(&original, &checked);
+        let responses = response.as_array().expect("batch response");
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["id"], 1);
+        assert_eq!(responses[1]["id"], 2);
+        assert!(
+            responses[0]["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("merge_pull_request")
+        );
+        assert!(
+            responses[1]["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("another request")
+        );
     }
 
     fn policy_denying_merge_pull_request() -> Policy {

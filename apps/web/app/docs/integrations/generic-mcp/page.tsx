@@ -19,6 +19,11 @@ export default function GenericMcpIntegrationPage() {
   --server github \\
   --listen 127.0.0.1:37422 \\
   --upstream http://127.0.0.1:3000/mcp`}</pre>
+      <p>
+        The HTTP proxy enforces single and batch JSON-RPC bodies, rejects denied batches without
+        partial forwarding, and filters denied list entries from complete JSON, chunked JSON, batch,
+        and SSE responses.
+      </p>
       <h2>Checks</h2>
       <pre>{`agentfence mcp check --server github --kind tool --name create_pull_request
 agentfence approvals list

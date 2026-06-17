@@ -6,7 +6,7 @@ AgentFence treats MCP access as a policy decision problem:
 Agent -> AgentFence MCP Proxy -> Real MCP Server
 ```
 
-The current code implements decision primitives, a stdio proxy, and a scoped HTTP JSON-RPC proxy.
+The current code implements decision primitives, a stdio proxy, and a scoped HTTP JSON-RPC proxy with batch governance.
 
 ## Current Command
 
@@ -68,10 +68,11 @@ The proxy inspects client-to-server JSON-RPC messages:
 - `tools/call` maps to MCP `tool` policy.
 - `resources/read` maps to MCP `resource` policy.
 - `prompts/get` maps to MCP `prompt` policy.
-- `tools/list`, `resources/list`, and `prompts/list` responses are filtered to remove denied entries.
+- JSON-RPC batch arrays are inspected item by item.
+- `tools/list`, `resources/list`, and `prompts/list` responses are filtered by JSON-RPC id to remove denied entries, including batch responses.
 - `rateLimit` blocks excessive allowed calls before they reach the upstream server.
 
-Allowed requests are forwarded to the upstream server. Denied requests receive a JSON-RPC error response and never reach upstream.
+Allowed requests are forwarded to the upstream server. Denied requests receive a JSON-RPC error response and never reach upstream. If any controlled call in a batch is denied, rate-limited, or not approved, the whole batch is rejected and request ids in the batch receive JSON-RPC errors.
 
 Each inspected call writes an audit event when policy audit logging is enabled. The event subject is `server/name`, the action is `mcp.tool`, `mcp.resource`, or `mcp.prompt`, and metadata includes the MCP arguments.
 
@@ -102,7 +103,7 @@ agentfence mcp http-proxy \
   --upstream http://127.0.0.1:3000/mcp
 ```
 
-The HTTP proxy uses the same policy, rate limit, ask-mode, list filtering, and audit behavior as the stdio proxy for JSON request and response bodies. It also proxies GET requests and streaming responses. For POST list requests, denied entries are filtered from complete JSON bodies, chunked JSON bodies, and JSON-RPC responses carried in SSE `data:` events. Other streaming payloads are passed through after request-level checks.
+The HTTP proxy uses the same policy, rate limit, ask-mode, batch handling, list filtering, and audit behavior as the stdio proxy for JSON request and response bodies. It also proxies GET requests and streaming responses. For POST list requests, denied entries are filtered from complete JSON bodies, chunked JSON bodies, batch JSON-RPC responses, and JSON-RPC responses carried in SSE `data:` events. Other streaming payloads are passed through after request-level checks.
 
 ## Rate Limits
 

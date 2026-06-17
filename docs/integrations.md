@@ -116,10 +116,10 @@ Wrapper profile: `examples/integrations/generic-mcp-proxy.json`
 | Codex | `codex` | `developer` | Verified | Verified | Supported when configured as an MCP client | Start Codex through `agentfence run` for shell enforcement. |
 | Claude Code | `claude-code` | `developer` | Verified | Verified | Supported when configured as an MCP client | Use actor `claude-code` for policy and audit separation. |
 | Cursor-style agents | `cursor-style` | `strict` | Verified | Verified | Supported for MCP servers | Wrap the underlying command or SDK runner. |
-| Generic MCP clients | `generic-mcp` | `developer` | Verified | Verified | Verified with `--ask-mode queue` | Stdio, HTTP JSON-RPC, GET/SSE passthrough, chunked JSON list filtering, and SSE list filtering are supported. |
+| Generic MCP clients | `generic-mcp` | `developer` | Verified | Verified | Verified with `--ask-mode queue` | Stdio, HTTP JSON-RPC, batch JSON-RPC governance, GET/SSE passthrough, chunked JSON list filtering, and SSE list filtering are supported. |
 
 ## Known Limits
 
 - Wrapper-only shell control cannot intercept commands an agent launches outside AgentFence.
 - OS-level filesystem and network enforcement are not yet implemented.
-- MCP HTTP stream passthrough is supported; list filtering applies to complete JSON, chunked JSON, and SSE list responses.
+- MCP HTTP stream passthrough is supported; list filtering applies to complete JSON, chunked JSON, batch JSON-RPC, and SSE list responses.
