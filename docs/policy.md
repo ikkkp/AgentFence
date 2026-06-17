@@ -54,6 +54,13 @@ Risk levels:
 - `high`: environment-changing, publishing, or repository-changing command
 - `critical`: destructive, privileged, or remote-code-execution command
 
+The built-in shell classifier treats the following as elevated risk before policy rules are applied:
+
+- `high`: nested shell execution such as `bash -lc`, `cmd /c`, `powershell -Command`, `node -e`, and `python -c`; repository mutations such as `git reset`, `git clean`, `git rebase`, `git checkout`, and `git restore`; dependency installs, package publishes, container runs, cloud CLIs, and infrastructure apply commands.
+- `critical`: privileged launchers such as `sudo`, `doas`, and `runas`; PowerShell encoded commands; remote install pipelines such as `curl ... | sh`; broad recursive deletes; infrastructure destroy commands such as `terraform destroy`, `pulumi destroy`, `kubectl delete`, and `helm uninstall`.
+
+This classifier is conservative because nested shells and encoded commands can hide follow-up actions from line-oriented wrappers. Full PTY interception remains a separate hardening milestone.
+
 ## MCP Rules
 
 MCP rules control server availability and per-tool/resource/prompt decisions.

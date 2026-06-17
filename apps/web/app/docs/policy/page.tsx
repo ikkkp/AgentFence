@@ -26,6 +26,16 @@ export default function PolicyPage() {
       <pre>{`agentfence filesystem check --operation read --path ~/.ssh/id_rsa
 agentfence network check --domain github.com
 agentfence skill check --name code-review`}</pre>
+      <h2>Shell risk classification</h2>
+      <p>
+        The built-in classifier raises risk for nested shell execution, encoded PowerShell commands,
+        repository history rewrites, package publishes, cloud CLIs, and infrastructure apply or destroy
+        commands before policy matching. This keeps wrapper-mode enforcement conservative while full PTY
+        interception remains a hardening milestone.
+      </p>
+      <pre>{`agentfence check --actor codex -- bash -lc "npm test"
+agentfence check --actor codex -- powershell -EncodedCommand SQBFAFgA
+agentfence check --actor codex -- terraform destroy`}</pre>
       <h2>Policy assistant</h2>
       <p>
         The assistant produces JSON Patch proposals. It does not apply policy changes automatically.

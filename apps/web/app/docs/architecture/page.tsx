@@ -39,6 +39,11 @@ AgentFence Daemon
         AgentFence proxies. Full PTY interception, full network proxying, and OS-level filesystem controls
         remain hardening milestones.
       </p>
+      <p>
+        Wrapper-mode shell control is conservative around nested interpreters and high-impact tooling:
+        `bash -lc`, `cmd /c`, `powershell -Command`, encoded PowerShell, package publishes, repository
+        rewrites, and infrastructure apply or destroy commands are elevated before policy rules match.
+      </p>
     </main>
   );
 }

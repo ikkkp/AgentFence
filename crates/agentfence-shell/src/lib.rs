@@ -59,33 +59,77 @@ fn is_critical(command: &str, first: &str) -> bool {
     command.contains("rm -rf /")
         || command.contains("rm -rf ~")
         || command.contains("del /s")
+        || command.contains("rd /s")
         || command.contains("format ")
-        || command.contains("curl ") && command.contains("|") && command.contains("sh")
-        || command.contains("wget ") && command.contains("|") && command.contains("sh")
+        || command.contains("remove-item")
+            && command.contains("-recurse")
+            && command.contains("-force")
+        || is_remote_script_pipe(command)
+        || is_encoded_shell(first, command)
         || first == "sudo"
+        || first == "doas"
+        || first == "runas"
+        || starts_with_any(
+            command,
+            &[
+                "terraform destroy",
+                "pulumi destroy",
+                "kubectl delete",
+                "helm uninstall",
+            ],
+        )
 }
 
 fn is_high(command: &str, first: &str) -> bool {
-    matches!(
-        first,
-        "rm" | "rmdir"
-            | "del"
-            | "mv"
-            | "move"
-            | "chmod"
-            | "chown"
-            | "ssh"
-            | "scp"
-            | "curl"
-            | "wget"
-    ) || command.starts_with("git push")
+    is_nested_shell(first, command)
+        || matches!(
+            first,
+            "rm" | "rmdir"
+                | "del"
+                | "erase"
+                | "mv"
+                | "move"
+                | "chmod"
+                | "chown"
+                | "ssh"
+                | "scp"
+                | "curl"
+                | "wget"
+                | "docker"
+                | "podman"
+                | "kubectl"
+                | "helm"
+                | "terraform"
+                | "pulumi"
+                | "aws"
+                | "gcloud"
+                | "az"
+        )
+        || command.starts_with("git push")
         || command.starts_with("git commit")
         || command.starts_with("git reset")
+        || command.starts_with("git clean")
+        || command.starts_with("git checkout")
+        || command.starts_with("git restore")
+        || command.starts_with("git rebase")
         || command.starts_with("npm install")
+        || command.starts_with("npm publish")
         || command.starts_with("pnpm install")
+        || command.starts_with("pnpm publish")
         || command.starts_with("yarn install")
+        || command.starts_with("yarn publish")
         || command.starts_with("pip install")
         || command.starts_with("cargo install")
+        || command.starts_with("cargo publish")
+        || command.starts_with("docker push")
+        || command.starts_with("docker run")
+        || command.starts_with("podman run")
+        || command.starts_with("kubectl apply")
+        || command.starts_with("helm upgrade")
+        || command.starts_with("terraform apply")
+        || command.starts_with("pulumi up")
+        || command.starts_with("vercel deploy")
+        || command.starts_with("netlify deploy")
 }
 
 fn is_low(command: &str, first: &str) -> bool {
@@ -96,6 +140,43 @@ fn is_low(command: &str, first: &str) -> bool {
         && !command.starts_with("git commit")
         && !command.starts_with("git reset")
         && !command.starts_with("git clean")
+        && !command.starts_with("git checkout")
+        && !command.starts_with("git restore")
+        && !command.starts_with("git rebase")
+}
+
+fn is_remote_script_pipe(command: &str) -> bool {
+    (command.contains("curl ") || command.contains("wget "))
+        && command.contains('|')
+        && (command.contains(" sh")
+            || command.contains(" bash")
+            || command.contains(" zsh")
+            || command.contains(" pwsh")
+            || command.contains(" powershell"))
+}
+
+fn is_encoded_shell(first: &str, command: &str) -> bool {
+    matches!(first, "powershell" | "pwsh")
+        && (command.contains(" -encodedcommand ") || command.contains(" -enc "))
+}
+
+fn is_nested_shell(first: &str, command: &str) -> bool {
+    match first {
+        "sh" | "bash" | "zsh" | "fish" => command.contains(" -c ") || command.contains(" -lc "),
+        "cmd" => command.contains(" /c ") || command.contains(" /k "),
+        "powershell" | "pwsh" => {
+            command.contains(" -command ")
+                || command.contains(" -c ")
+                || command.contains(" -file ")
+        }
+        "python" | "python3" | "perl" | "ruby" => command.contains(" -c "),
+        "node" => command.contains(" -e ") || command.contains(" --eval "),
+        _ => false,
+    }
+}
+
+fn starts_with_any(value: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| value.starts_with(prefix))
 }
 
 fn normalize(value: &str) -> String {
@@ -177,6 +258,39 @@ mod tests {
     fn classifies_install_as_high() {
         let command = classify_command(&["npm".to_string(), "install".to_string()]);
         assert_eq!(command.risk, Risk::High);
+    }
+
+    #[test]
+    fn classifies_nested_shell_as_high() {
+        let command = classify_command(&[
+            "bash".to_string(),
+            "-lc".to_string(),
+            "npm test".to_string(),
+        ]);
+        assert_eq!(command.risk, Risk::High);
+    }
+
+    #[test]
+    fn classifies_powershell_encoded_command_as_critical() {
+        let command = classify_command(&[
+            "powershell".to_string(),
+            "-EncodedCommand".to_string(),
+            "SQBFAFgA".to_string(),
+        ]);
+        assert_eq!(command.risk, Risk::Critical);
+    }
+
+    #[test]
+    fn classifies_repository_rewrite_as_high() {
+        let command =
+            classify_command(&["git".to_string(), "clean".to_string(), "-fd".to_string()]);
+        assert_eq!(command.risk, Risk::High);
+    }
+
+    #[test]
+    fn classifies_infrastructure_destroy_as_critical() {
+        let command = classify_command(&["terraform".to_string(), "destroy".to_string()]);
+        assert_eq!(command.risk, Risk::Critical);
     }
 
     #[test]
