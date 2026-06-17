@@ -132,6 +132,35 @@ nav a:hover {
   justify-content: flex-end;
 }
 
+.daemon-guide {
+  align-items: center;
+  background: #fff8e8;
+  border: 1px solid #f0d89e;
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin: -8px 0 18px;
+  padding: 12px 14px;
+}
+
+.daemon-guide strong,
+.daemon-guide code {
+  display: block;
+}
+
+.daemon-guide strong {
+  color: #8b5600;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.daemon-guide code {
+  color: #17211c;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .text-button {
   align-items: center;
   background: #f8faf7;
@@ -247,6 +276,27 @@ nav a:hover {
 
 .approval small {
   color: #78867e;
+}
+
+.finding-list {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 9px 0 0;
+  padding: 0;
+}
+
+.finding-list li,
+.audit-signal {
+  background: #fff8e8;
+  border: 1px solid #f0d89e;
+  border-radius: 8px;
+  color: #7a4b00;
+  font-size: 12px;
+}
+
+.finding-list li {
+  padding: 6px 8px;
 }
 
 .risk {
@@ -669,6 +719,17 @@ th {
   font-weight: 600;
 }
 
+.muted {
+  color: #8a978f;
+}
+
+.audit-signal {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 5px 7px;
+}
+
 .decision {
   border-radius: 999px;
   font-size: 12px;
@@ -897,6 +958,11 @@ th {
   }
 
   .notification-settings {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daemon-guide {
     align-items: stretch;
     flex-direction: column;
   }

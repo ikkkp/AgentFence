@@ -47,7 +47,13 @@ const fallbackApprovals: ApprovalRequest[] = [
     action: "mcp.tool",
     subject: "github/create_pull_request",
     risk: "medium",
-    reason: "creating a pull request requires approval"
+    reason: "creating a pull request requires approval",
+    metadata: {
+      argumentInspection: {
+        risk: "high",
+        findings: ["$.title references production or release context"]
+      }
+    }
   }
 ];
 
@@ -81,6 +87,22 @@ const fallbackAudit: AuditEvent[] = [
     decision: "ask",
     risk: "medium",
     reason: "filesystem write-like operation requires policy decision"
+  },
+  {
+    id: "audit_104",
+    timestamp: new Date().toISOString(),
+    actor: "mcp-proxy",
+    action: "mcp.tool",
+    subject: "github/list_issues",
+    decision: "ask",
+    risk: "critical",
+    reason: "MCP arguments require review before forwarding",
+    metadata: {
+      argumentInspection: {
+        risk: "critical",
+        findings: ["$.api_key key suggests secret material"]
+      }
+    }
   }
 ];
 
@@ -571,6 +593,24 @@ function App() {
           </div>
         </header>
 
+        {daemon !== "ready" && (
+          <section className="daemon-guide" aria-label="Daemon connection">
+            <div>
+              <strong>Daemon {daemon}</strong>
+              <code>cargo run --bin agentfenced -- --listen 127.0.0.1:37421</code>
+            </div>
+            <button className="text-button" onClick={() => {
+              refreshApprovals();
+              refreshAudit();
+              refreshPolicy();
+              refreshPolicySuggestions();
+              refreshBundleDigest();
+            }}>
+              <RefreshCw size={15} />Retry
+            </button>
+          </section>
+        )}
+
         <section className="metrics" aria-label="Permission summary">
           <Metric label="Active agents" value={String(activeAgents.size)} detail={Array.from(activeAgents).join(", ") || "none observed"} />
           <Metric label="Pending approvals" value={String(approvals.length)} detail={`${approvals.filter((item) => item.risk === "high").length} high risk`} />
@@ -590,6 +630,7 @@ function App() {
                     <strong>{item.subject}</strong>
                     <p>{item.actor} - {item.action}</p>
                     <small>{item.reason}</small>
+                    <FindingList findings={argumentInspectionFindings(item.metadata)} />
                   </div>
                   <div className="approval-actions">
                     <button className="icon-button allow" aria-label="Allow once" onClick={() => resolveApproval(item.id, "allowed")}><Check size={16} /></button>
@@ -801,19 +842,24 @@ function App() {
                   <th>Decision</th>
                   <th>Risk</th>
                   <th>Subject</th>
+                  <th>Signal</th>
                 </tr>
               </thead>
               <tbody>
-                {auditEvents.map((item) => (
-                  <tr key={item.id}>
-                    <td>{formatAuditTime(item.timestamp)}</td>
-                    <td>{item.actor}</td>
-                    <td>{item.action}</td>
-                    <td><span className={`decision ${item.decision}`}>{item.decision}</span></td>
-                    <td>{item.risk}</td>
-                    <td>{item.subject}</td>
-                  </tr>
-                ))}
+                {auditEvents.map((item) => {
+                  const signal = auditSignal(item);
+                  return (
+                    <tr key={item.id}>
+                      <td>{formatAuditTime(item.timestamp)}</td>
+                      <td>{item.actor}</td>
+                      <td>{item.action}</td>
+                      <td><span className={`decision ${item.decision}`}>{item.decision}</span></td>
+                      <td>{item.risk}</td>
+                      <td>{item.subject}</td>
+                      <td>{signal ? <span className="audit-signal">{signal}</span> : <span className="muted">-</span>}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Panel>
@@ -940,6 +986,38 @@ function Control({ name, value }: { name: string; value: string }) {
       <strong className={`decision ${value}`}>{value}</strong>
     </div>
   );
+}
+
+function FindingList({ findings }: { findings: string[] }) {
+  if (findings.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="finding-list">
+      {findings.slice(0, 3).map((finding) => (
+        <li key={finding}>{finding}</li>
+      ))}
+    </ul>
+  );
+}
+
+function auditSignal(event: AuditEvent) {
+  const findings = argumentInspectionFindings(event.metadata);
+  if (findings.length > 0) {
+    return findings[0];
+  }
+  return event.matchedRule ?? "";
+}
+
+function argumentInspectionFindings(metadata: unknown) {
+  if (!isRecord(metadata)) {
+    return [];
+  }
+  const inspection = metadata.argumentInspection;
+  if (!isRecord(inspection) || !Array.isArray(inspection.findings)) {
+    return [];
+  }
+  return inspection.findings.filter((item): item is string => typeof item === "string");
 }
 
 function formatAuditTime(timestamp: string) {
