@@ -1,7 +1,9 @@
+import { sitePath } from "../../site-path";
+
 export default function QuickstartPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence Docs</a>
+      <a className="back" href={sitePath("/")}>AgentFence Docs</a>
       <h1>Quickstart</h1>
       <ol>
         <li>Initialize a policy in your project.</li>
@@ -29,7 +31,7 @@ agentfence run --actor claude-code -- claude`}</pre>
         See the integrations guide for Codex, Claude Code, Cursor-style agents, and generic MCP clients.
       </p>
       <p>
-        <a href="/docs/integrations">Open integrations guide</a>
+        <a href={sitePath("/docs/integrations")}>Open integrations guide</a>
       </p>
     </main>
   );

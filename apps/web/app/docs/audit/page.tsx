@@ -1,7 +1,9 @@
+import { sitePath } from "../../site-path";
+
 export default function AuditPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence Docs</a>
+      <a className="back" href={sitePath("/")}>AgentFence Docs</a>
       <h1>Audit Export</h1>
       <p>
         AgentFence stores audit events locally in SQLite and exports recent events as JSON or CSV.

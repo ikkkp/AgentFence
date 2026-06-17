@@ -1,7 +1,9 @@
+import { sitePath } from "../../../site-path";
+
 export default function GenericMcpIntegrationPage() {
   return (
     <main className="page">
-      <a className="back" href="/docs/integrations">Integrations</a>
+      <a className="back" href={sitePath("/docs/integrations")}>Integrations</a>
       <h1>Generic MCP Clients</h1>
       <p>
         Put AgentFence between the MCP client and upstream server to enforce tools, resources, prompts, approvals, and audit.

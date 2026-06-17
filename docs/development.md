@@ -52,6 +52,25 @@ The desktop development server uses `http://127.0.0.1:37420`.
 The website development server uses `http://127.0.0.1:37430`.
 The daemon uses `http://127.0.0.1:37421`.
 
+## GitHub Pages
+
+Pushes to `main` run `.github/workflows/pages.yml`, export the website as static files, and deploy it to GitHub Pages at:
+
+```text
+https://ikkkp.github.io/AgentFence/
+```
+
+Build the same static export locally:
+
+```powershell
+$env:GITHUB_PAGES = "true"
+$env:NEXT_PUBLIC_BASE_PATH = "/AgentFence"
+$env:NEXT_PUBLIC_SITE_URL = "https://ikkkp.github.io/AgentFence"
+pnpm --filter @agentfence/web build
+```
+
+The exported site is written to `apps/web/out`.
+
 ## Release Packaging
 
 ```bash

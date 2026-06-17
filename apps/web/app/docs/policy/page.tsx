@@ -1,7 +1,9 @@
+import { sitePath } from "../../site-path";
+
 export default function PolicyPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence Docs</a>
+      <a className="back" href={sitePath("/")}>AgentFence Docs</a>
       <h1>Policy JSON</h1>
       <p>
         AgentFence policies describe actor trust, shell command rules, filesystem boundaries, network

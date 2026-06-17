@@ -1,7 +1,9 @@
+import { sitePath } from "../../../site-path";
+
 export default function ClaudeCodeIntegrationPage() {
   return (
     <main className="page">
-      <a className="back" href="/docs/integrations">Integrations</a>
+      <a className="back" href={sitePath("/docs/integrations")}>Integrations</a>
       <h1>Claude Code Integration</h1>
       <p>
         Use the `claude-code` actor to keep Claude Code approvals and audit history separate from other local agents.

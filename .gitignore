@@ -4,6 +4,7 @@ node_modules/
 .next/
 dist/
 build/
+apps/web/out/
 .agentfence/
 *.tsbuildinfo
 apps/desktop/src-tauri/gen/

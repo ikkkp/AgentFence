@@ -1,7 +1,9 @@
+import { sitePath } from "../site-path";
+
 export default function DownloadPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence</a>
+      <a className="back" href={sitePath("/")}>AgentFence</a>
       <h1>Download</h1>
       <p>
         Tagged releases produce CLI, daemon, and desktop artifacts. Until the first public release is

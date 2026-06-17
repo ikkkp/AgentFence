@@ -1,7 +1,9 @@
+import { sitePath } from "../site-path";
+
 export default function SecurityPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence</a>
+      <a className="back" href={sitePath("/")}>AgentFence</a>
       <h1>Security Model</h1>
       <p>
         AgentFence is local-first. Policy evaluation, approval decisions, and audit logging happen on

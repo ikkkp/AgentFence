@@ -1,7 +1,9 @@
+import { sitePath } from "../../../site-path";
+
 export default function CodexIntegrationPage() {
   return (
     <main className="page">
-      <a className="back" href="/docs/integrations">Integrations</a>
+      <a className="back" href={sitePath("/docs/integrations")}>Integrations</a>
       <h1>Codex Integration</h1>
       <p>
         Run Codex with actor-specific audit rows, shell checks, network-domain checks, and optional MCP proxy enforcement.

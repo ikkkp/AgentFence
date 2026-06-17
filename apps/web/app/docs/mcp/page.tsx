@@ -1,7 +1,9 @@
+import { sitePath } from "../../site-path";
+
 export default function McpPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence Docs</a>
+      <a className="back" href={sitePath("/")}>AgentFence Docs</a>
       <h1>MCP Controls</h1>
       <p>
         MCP policy rules control which servers, tools, resources, and prompts an agent may access. AgentFence

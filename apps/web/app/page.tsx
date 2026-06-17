@@ -1,4 +1,5 @@
 import { ArrowRight, CheckCircle2, FileJson, LockKeyhole, TerminalSquare } from "lucide-react";
+import { sitePath } from "./site-path";
 
 const features = [
   {
@@ -22,17 +23,17 @@ export default function HomePage() {
   return (
     <main>
       <header className="nav">
-        <a className="logo" href="/">
+        <a className="logo" href={sitePath("/")}>
           <span>AF</span>
           AgentFence
         </a>
         <nav>
-          <a href="/docs/quickstart">Docs</a>
-          <a href="/docs/integrations">Integrations</a>
-          <a href="/security">Security</a>
-          <a href="/changelog">Changelog</a>
-          <a href="/blog">Blog</a>
-          <a href="/download">Download</a>
+          <a href={sitePath("/docs/quickstart")}>Docs</a>
+          <a href={sitePath("/docs/integrations")}>Integrations</a>
+          <a href={sitePath("/security")}>Security</a>
+          <a href={sitePath("/changelog")}>Changelog</a>
+          <a href={sitePath("/blog")}>Blog</a>
+          <a href={sitePath("/download")}>Download</a>
           <a className="button small" href="https://github.com/ikkkp/AgentFence">GitHub</a>
         </nav>
       </header>
@@ -46,10 +47,10 @@ export default function HomePage() {
             MCP tools, skills, files, and external extensions.
           </p>
           <div className="actions">
-            <a className="button" href="/docs/quickstart">
+            <a className="button" href={sitePath("/docs/quickstart")}>
               Start building <ArrowRight size={18} />
             </a>
-            <a className="button secondary" href="/download">Download desktop</a>
+            <a className="button secondary" href={sitePath("/download")}>Download desktop</a>
           </div>
         </div>
         <div className="terminal" aria-label="AgentFence CLI example">

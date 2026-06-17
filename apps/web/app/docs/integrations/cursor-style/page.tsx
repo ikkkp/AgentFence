@@ -1,7 +1,9 @@
+import { sitePath } from "../../../site-path";
+
 export default function CursorStyleIntegrationPage() {
   return (
     <main className="page">
-      <a className="back" href="/docs/integrations">Integrations</a>
+      <a className="back" href={sitePath("/docs/integrations")}>Integrations</a>
       <h1>Cursor-Style Agents</h1>
       <p>
         Wrap the executable, script, or harness that actually launches local commands.

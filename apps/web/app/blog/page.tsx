@@ -1,3 +1,5 @@
+import { sitePath } from "../site-path";
+
 const posts = [
   {
     title: "Why AgentFence Starts Local",
@@ -16,7 +18,7 @@ const posts = [
 export default function BlogPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence</a>
+      <a className="back" href={sitePath("/")}>AgentFence</a>
       <h1>Blog</h1>
       <p>
         Notes on local-first AI agent security, permission UX, MCP governance, and the engineering

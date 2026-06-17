@@ -1,3 +1,5 @@
+import { sitePath } from "../site-path";
+
 const releases = [
   {
     title: "Unreleased",
@@ -24,7 +26,7 @@ const releases = [
 export default function ChangelogPage() {
   return (
     <main className="page">
-      <a className="back" href="/">AgentFence</a>
+      <a className="back" href={sitePath("/")}>AgentFence</a>
       <h1>Changelog</h1>
       <p>
         Product changes are tracked here as AgentFence moves from local shell governance toward a
