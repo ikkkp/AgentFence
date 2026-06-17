@@ -1,11 +1,30 @@
 {
-  "agent": "cursor-style-agent",
   "actor": "cursor-agent",
-  "recommendedPreset": "strict",
-  "command": ["agentfence", "run", "--actor", "cursor-agent", "--", "node", "./agent-entrypoint.js"],
+  "agent": "cursor-style-agent",
   "auditStore": ".agentfence/audit.sqlite",
+  "command": [
+    "agentfence",
+    "run",
+    "--actor",
+    "cursor-agent",
+    "--",
+    "node",
+    "./agent-entrypoint.js"
+  ],
+  "init": {
+    "command": [
+      "agentfence",
+      "init",
+      "--preset",
+      "strict",
+      "--project",
+      "cursor-agent-project"
+    ]
+  },
   "notes": [
     "Wrap the agent harness or script that actually launches local commands.",
     "Start strict, then loosen rules with explicit policy patches after observing audit logs."
-  ]
+  ],
+  "profile": "cursor-style",
+  "recommendedPreset": "strict"
 }

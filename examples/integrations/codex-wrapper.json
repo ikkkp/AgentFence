@@ -1,12 +1,30 @@
 {
-  "agent": "codex",
   "actor": "codex",
-  "recommendedPreset": "developer",
-  "policy": "../codex.policy.json",
-  "command": ["agentfence", "run", "--actor", "codex", "--", "codex"],
+  "agent": "codex",
   "auditStore": ".agentfence/audit.sqlite",
+  "command": [
+    "agentfence",
+    "run",
+    "--actor",
+    "codex",
+    "--",
+    "codex"
+  ],
+  "init": {
+    "command": [
+      "agentfence",
+      "init",
+      "--preset",
+      "developer",
+      "--project",
+      "codex-project"
+    ]
+  },
   "notes": [
     "Run Codex through this wrapper to enforce shell and network-domain policy before execution.",
     "Use agentfence mcp proxy for MCP servers configured inside Codex."
-  ]
+  ],
+  "policy": "examples/codex.policy.json",
+  "profile": "codex",
+  "recommendedPreset": "developer"
 }

@@ -1,7 +1,6 @@
 {
-  "agent": "generic-mcp-client",
   "actor": "mcp-proxy",
-  "recommendedPreset": "developer",
+  "agent": "generic-mcp-client",
   "command": [
     "agentfence",
     "mcp",
@@ -18,5 +17,7 @@
   "notes": [
     "Use --ask-mode queue to route ask decisions to the daemon and desktop approval queue.",
     "Denied tools, resources, and prompts are blocked before they reach the upstream MCP server."
-  ]
+  ],
+  "profile": "generic-mcp",
+  "recommendedPreset": "developer"
 }

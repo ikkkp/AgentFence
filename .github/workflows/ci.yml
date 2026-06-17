@@ -18,6 +18,9 @@ jobs:
       - name: Smoke
         shell: pwsh
         run: ./scripts/smoke.ps1
+      - name: Integration smoke
+        shell: pwsh
+        run: ./scripts/integration-smoke.ps1 -SkipCargoBuild
       - name: Packaging scripts
         shell: pwsh
         run: |

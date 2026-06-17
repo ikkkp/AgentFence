@@ -25,6 +25,12 @@ agentfence integrations install codex --format powershell --output-dir .agentfen
 
 Install writes a reusable wrapper script. Shell wrappers forward extra arguments with `"$@"`; PowerShell wrappers forward remaining arguments with `@AgentFenceArgs`. Add `--add-to-path` when you want AgentFence to persist the wrapper directory on your user PATH; open a new terminal afterward before running `agentfence-codex` or `agentfence-claude-code` by name.
 
+The built-in profile examples are locked by `scripts/integration-smoke.ps1`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/integration-smoke.ps1
+```
+
 Detailed guides:
 
 - [Codex](./integration-guides/codex.md)
@@ -105,12 +111,12 @@ Wrapper profile: `examples/integrations/generic-mcp-proxy.json`
 
 ## Compatibility Matrix
 
-| Integration | Shell wrapper | MCP stdio proxy | Desktop approvals | Notes |
-| --- | --- | --- | --- | --- |
-| Codex | Supported | Supported when configured as an MCP client | Supported | Start Codex through `agentfence run` for shell enforcement. |
-| Claude Code | Supported | Supported when configured as an MCP client | Supported | Use actor `claude-code` for policy and audit separation. |
-| Cursor-style agents | Harness dependent | Supported for MCP servers | Supported | Wrap the underlying command or SDK runner. |
-| Generic MCP clients | Not applicable | Supported | Supported with `--ask-mode queue` | Stdio, HTTP JSON-RPC, GET/SSE passthrough, chunked JSON list filtering, and SSE list filtering are supported. |
+| Integration | Profile | Recommended preset | Shell wrapper | PowerShell wrapper | MCP proxy | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Codex | `codex` | `developer` | Verified | Verified | Supported when configured as an MCP client | Start Codex through `agentfence run` for shell enforcement. |
+| Claude Code | `claude-code` | `developer` | Verified | Verified | Supported when configured as an MCP client | Use actor `claude-code` for policy and audit separation. |
+| Cursor-style agents | `cursor-style` | `strict` | Verified | Verified | Supported for MCP servers | Wrap the underlying command or SDK runner. |
+| Generic MCP clients | `generic-mcp` | `developer` | Verified | Verified | Verified with `--ask-mode queue` | Stdio, HTTP JSON-RPC, GET/SSE passthrough, chunked JSON list filtering, and SSE list filtering are supported. |
 
 ## Known Limits
 
