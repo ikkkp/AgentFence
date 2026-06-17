@@ -134,6 +134,14 @@ try {
   }
   Assert-Contains $mcpDeny '"decision": "deny"' "MCP deny check"
 
+  $dangerousMcpArgumentsPath = Join-Path $tempRoot "mcp-arguments.json"
+  Set-Content -LiteralPath $dangerousMcpArgumentsPath -Encoding UTF8 -Value '{"api_key":"sk-test"}'
+  $mcpArgumentInspection = Invoke-Checked "Check MCP argument inspection" {
+    & $agentfence mcp check --server github --kind tool --name list_issues --arguments-file $dangerousMcpArgumentsPath --policy $policyPath
+  }
+  Assert-Contains $mcpArgumentInspection '"decision": "ask"' "MCP argument inspection"
+  Assert-Contains $mcpArgumentInspection '"matchedRule": "mcp.argumentInspection"' "MCP argument inspection"
+
   $auditPath = Join-Path $tempRoot "smoke-audit.sqlite"
   Push-Location $repoRoot
   Invoke-Checked "Run an allowed guarded command and write audit log" {

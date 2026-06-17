@@ -599,6 +599,10 @@ enum McpCommands {
         kind: String,
         #[arg(long)]
         name: String,
+        #[arg(long = "arguments-json")]
+        arguments_json: Option<String>,
+        #[arg(long = "arguments-file")]
+        arguments_file: Option<PathBuf>,
         #[arg(long)]
         policy: Option<PathBuf>,
     },
@@ -3069,21 +3073,37 @@ fn mcp_command(command: McpCommands) -> Result<ExitCode> {
             server,
             kind,
             name,
+            arguments_json,
+            arguments_file,
             policy,
         } => {
             let cwd = env::current_dir().context("failed to read current directory")?;
             let policy_path = resolve_policy_path(policy.as_deref(), &cwd)?;
             let policy = load_policy(&policy_path)?;
+            let arguments = match (arguments_json, arguments_file) {
+                (Some(_), Some(_)) => bail!("use only one of --arguments-json or --arguments-file"),
+                (Some(value), None) => serde_json::from_str(&value)
+                    .with_context(|| "failed to parse --arguments-json as JSON")?,
+                (None, Some(path)) => {
+                    let value = fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    serde_json::from_str(value.trim_start_matches('\u{feff}'))
+                        .with_context(|| format!("failed to parse {} as JSON", path.display()))?
+                }
+                (None, None) => serde_json::Value::Null,
+            };
             let decision = agentfence_mcp::decide(
                 &policy,
                 agentfence_mcp::McpAccessRequest {
                     server,
                     kind,
                     name,
-                    arguments: serde_json::Value::Null,
+                    arguments,
                 },
             );
-            println!("{}", serde_json::to_string_pretty(&decision)?);
+            let mut output = serde_json::to_value(&decision)?;
+            redact_sensitive_json(&mut output);
+            println!("{}", serde_json::to_string_pretty(&output)?);
             Ok(ExitCode::SUCCESS)
         }
         McpCommands::Proxy(args) => mcp_proxy(args),
@@ -3243,10 +3263,7 @@ fn handle_mcp_http_connection(
             wait_for_mcp_approval(
                 &args.daemon,
                 args.ask_timeout_seconds,
-                &decision.request.server,
-                &decision.request.kind,
-                &decision.request.name,
-                decision.request.arguments.clone(),
+                &decision.request,
                 decision.decision.clone(),
             )?
         } else {
@@ -4179,10 +4196,7 @@ fn mcp_proxy(args: McpProxyArgs) -> Result<ExitCode> {
             wait_for_mcp_approval(
                 &args.daemon,
                 args.ask_timeout_seconds,
-                &decision.request.server,
-                &decision.request.kind,
-                &decision.request.name,
-                decision.request.arguments.clone(),
+                &decision.request,
                 decision.decision.clone(),
             )?
         } else {
@@ -4347,25 +4361,72 @@ fn network_decision_from_json(value: &serde_json::Value) -> Option<(&str, Decisi
     Some((domain, decision))
 }
 
+fn redact_sensitive_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                if sensitive_json_key(key) {
+                    *child = serde_json::Value::String("[REDACTED]".to_string());
+                } else {
+                    redact_sensitive_json(child);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                redact_sensitive_json(child);
+            }
+        }
+        serde_json::Value::String(raw) if sensitive_json_value(raw) => {
+            *raw = "[REDACTED]".to_string();
+        }
+        _ => {}
+    }
+}
+
+fn sensitive_json_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    [
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "credential",
+        "private_key",
+        "private-key",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn sensitive_json_value(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.starts_with("sk-")
+        || trimmed.starts_with("ghp_")
+        || trimmed.starts_with("github_pat_")
+        || trimmed.starts_with("AKIA")
+        || trimmed.starts_with("ASIA")
+}
+
 fn wait_for_mcp_approval(
     daemon: &str,
     timeout_seconds: u64,
-    server: &str,
-    kind: &str,
-    name: &str,
-    arguments: serde_json::Value,
+    request: &agentfence_mcp::McpAccessRequest,
     decision: agentfence_policy::DecisionResult,
 ) -> Result<bool> {
+    let argument_inspection = agentfence_mcp::inspect_arguments(request);
     let create = serde_json::json!({
         "actor": "mcp-proxy",
-        "action": format!("mcp.{kind}"),
-        "subject": format!("{server}/{name}"),
+        "action": format!("mcp.{}", request.kind),
+        "subject": format!("{}/{}", request.server, request.name),
         "decision": decision,
         "metadata": {
-            "server": server,
-            "kind": kind,
-            "name": name,
-            "arguments": arguments
+            "server": &request.server,
+            "kind": &request.kind,
+            "name": &request.name,
+            "arguments": &request.arguments,
+            "argumentInspection": argument_inspection
         }
     });
     let approval = local_daemon_json(daemon, "POST", "/approvals", Some(create))?;
@@ -4410,11 +4471,13 @@ fn append_mcp_audit(
         decision.reason.clone(),
     );
     event.matched_rule = decision.matched_rule.clone();
+    let argument_inspection = agentfence_mcp::inspect_arguments(request);
     event.metadata = serde_json::json!({
         "server": &request.server,
         "kind": &request.kind,
         "name": &request.name,
         "arguments": &request.arguments,
+        "argumentInspection": argument_inspection,
         "decision": decision.decision
     });
     store.append(&event)
@@ -5192,6 +5255,24 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn redacts_sensitive_json_keys_and_values() {
+        let mut value = serde_json::json!({
+            "request": {
+                "arguments": {
+                    "api_key": "sk-test",
+                    "nested": ["ghp_example", "safe"]
+                }
+            }
+        });
+
+        redact_sensitive_json(&mut value);
+
+        assert_eq!(value["request"]["arguments"]["api_key"], "[REDACTED]");
+        assert_eq!(value["request"]["arguments"]["nested"][0], "[REDACTED]");
+        assert_eq!(value["request"]["arguments"]["nested"][1], "safe");
     }
 
     fn test_temp_dir(prefix: &str) -> PathBuf {

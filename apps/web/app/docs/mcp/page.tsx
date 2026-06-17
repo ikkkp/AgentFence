@@ -12,7 +12,21 @@ export default function McpPage() {
       <pre>{`agentfence mcp check \\
   --server github \\
   --kind tool \\
-  --name create_pull_request`}</pre>
+  --name create_pull_request
+
+agentfence mcp check \\
+  --server github \\
+  --kind tool \\
+  --name list_issues \\
+  --arguments-json '{"api_key":"sk-test"}'`}</pre>
+      <p>
+        MCP arguments are inspected before forwarding. Secret-looking keys or values, sensitive paths,
+        production or release context, and high-impact tool names are written to `argumentInspection`;
+        high or critical findings upgrade otherwise allowed calls to ask.
+      </p>
+      <pre>{`# Windows-friendly argument simulation
+Set-Content -Encoding UTF8 .\\mcp-arguments.json '{"api_key":"sk-test"}'
+agentfence mcp check --server github --kind tool --name list_issues --arguments-file .\\mcp-arguments.json`}</pre>
       <h2>Stdio proxy</h2>
       <pre>{`agentfence mcp proxy --server github -- node path/to/github-mcp-server.js`}</pre>
       <p>

@@ -21,11 +21,216 @@ pub struct McpAccessRequest {
 pub struct McpAccessDecision {
     pub request: McpAccessRequest,
     pub decision: DecisionResult,
+    #[serde(default, skip_serializing_if = "McpArgumentInspection::is_clean")]
+    pub argument_inspection: McpArgumentInspection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpArgumentInspection {
+    pub risk: Risk,
+    pub findings: Vec<String>,
+}
+
+impl Default for McpArgumentInspection {
+    fn default() -> Self {
+        Self {
+            risk: Risk::Low,
+            findings: Vec::new(),
+        }
+    }
+}
+
+impl McpArgumentInspection {
+    pub fn is_clean(&self) -> bool {
+        self.findings.is_empty()
+    }
 }
 
 pub fn decide(policy: &Policy, request: McpAccessRequest) -> McpAccessDecision {
-    let decision = evaluate_mcp(policy, &request.server, &request.kind, &request.name);
-    McpAccessDecision { request, decision }
+    let mut decision = evaluate_mcp(policy, &request.server, &request.kind, &request.name);
+    let inspection = inspect_arguments(&request);
+    decision.risk = decision.risk.max(inspection.risk);
+
+    if !inspection.is_clean() {
+        let summary = inspection.findings.join("; ");
+        if matches!(
+            decision.decision,
+            Decision::Allow
+                | Decision::AllowOnce
+                | Decision::AllowForSession
+                | Decision::AllowWithConstraints
+        ) && inspection.risk >= Risk::High
+        {
+            decision.decision = Decision::Ask;
+            decision.reason = format!(
+                "MCP arguments require review before forwarding: {summary}; base decision was allow"
+            );
+            decision.matched_rule = Some("mcp.argumentInspection".to_string());
+        } else {
+            decision.reason = format!("{}; MCP argument inspection: {summary}", decision.reason);
+        }
+    }
+
+    McpAccessDecision {
+        request,
+        decision,
+        argument_inspection: inspection,
+    }
+}
+
+pub fn inspect_arguments(request: &McpAccessRequest) -> McpArgumentInspection {
+    let mut inspection = McpArgumentInspection {
+        risk: Risk::Low,
+        findings: Vec::new(),
+    };
+
+    inspect_surface_name(request, &mut inspection);
+    inspect_value("$", &request.arguments, &mut inspection);
+
+    inspection
+}
+
+fn inspect_surface_name(request: &McpAccessRequest, inspection: &mut McpArgumentInspection) {
+    let name = request.name.to_ascii_lowercase();
+    if contains_any(
+        &name,
+        &[
+            "secret",
+            "credential",
+            "token",
+            "private_key",
+            "private-key",
+        ],
+    ) {
+        push_finding(
+            inspection,
+            Risk::Critical,
+            format!(
+                "{} name references secret or credential material",
+                request.kind
+            ),
+        );
+    }
+
+    if contains_any(
+        &name,
+        &[
+            "delete", "destroy", "merge", "deploy", "publish", "exec", "shell", "command",
+        ],
+    ) {
+        push_finding(
+            inspection,
+            Risk::High,
+            format!("{} name suggests high-impact operation", request.kind),
+        );
+    }
+}
+
+fn inspect_value(path: &str, value: &Value, inspection: &mut McpArgumentInspection) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let child_path = format!("{path}.{key}");
+                inspect_key(&child_path, key, inspection);
+                inspect_value(&child_path, child, inspection);
+            }
+        }
+        Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                inspect_value(&format!("{path}[{index}]"), child, inspection);
+            }
+        }
+        Value::String(value) => inspect_string(path, value, inspection),
+        _ => {}
+    }
+}
+
+fn inspect_key(path: &str, key: &str, inspection: &mut McpArgumentInspection) {
+    let lower = key.to_ascii_lowercase();
+    if contains_any(
+        &lower,
+        &[
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "apikey",
+            "credential",
+            "private_key",
+            "private-key",
+        ],
+    ) {
+        push_finding(
+            inspection,
+            Risk::Critical,
+            format!("{path} key suggests secret material"),
+        );
+    }
+}
+
+fn inspect_string(path: &str, value: &str, inspection: &mut McpArgumentInspection) {
+    let lower = value.to_ascii_lowercase();
+
+    if contains_any(
+        &lower,
+        &[
+            "~/.ssh",
+            ".ssh/",
+            ".env",
+            "id_rsa",
+            "id_ed25519",
+            "secrets.json",
+            ".aws/",
+            "credentials",
+        ],
+    ) {
+        push_finding(
+            inspection,
+            Risk::Critical,
+            format!("{path} references a sensitive path or credential file"),
+        );
+    }
+
+    if looks_like_secret(value) {
+        push_finding(
+            inspection,
+            Risk::Critical,
+            format!("{path} contains a secret-looking value"),
+        );
+    }
+
+    if contains_any(&lower, &["production", "prod", "release"]) {
+        push_finding(
+            inspection,
+            Risk::High,
+            format!("{path} references production or release context"),
+        );
+    }
+}
+
+fn looks_like_secret(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.starts_with("sk-")
+        || trimmed.starts_with("ghp_")
+        || trimmed.starts_with("github_pat_")
+        || trimmed.starts_with("AKIA")
+        || trimmed.starts_with("ASIA")
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
+}
+
+fn push_finding(inspection: &mut McpArgumentInspection, risk: Risk, finding: String) {
+    inspection.risk = inspection.risk.max(risk);
+    if !inspection
+        .findings
+        .iter()
+        .any(|existing| existing == &finding)
+    {
+        inspection.findings.push(finding);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +538,65 @@ mod tests {
         let request = inspect_client_message("github", &message).expect("request");
         assert_eq!(request.kind, "tool");
         assert_eq!(request.name, "create_pull_request");
+    }
+
+    #[test]
+    fn sensitive_allowed_tool_arguments_require_review() {
+        let mut tools = BTreeMap::new();
+        tools.insert("read_file".to_string(), Decision::Allow);
+        let mut policy = Policy::default();
+        policy.mcp.servers.insert(
+            "filesystem".to_string(),
+            McpServerPolicy {
+                tools,
+                ..McpServerPolicy::default()
+            },
+        );
+
+        let decision = decide(
+            &policy,
+            McpAccessRequest {
+                server: "filesystem".to_string(),
+                kind: "tool".to_string(),
+                name: "read_file".to_string(),
+                arguments: json!({ "path": "~/.ssh/id_rsa" }),
+            },
+        );
+
+        assert_eq!(decision.decision.decision, Decision::Ask);
+        assert_eq!(decision.decision.risk, Risk::Critical);
+        assert_eq!(
+            decision.decision.matched_rule.as_deref(),
+            Some("mcp.argumentInspection")
+        );
+    }
+
+    #[test]
+    fn denied_mcp_tool_stays_denied_when_arguments_are_sensitive() {
+        let mut tools = BTreeMap::new();
+        tools.insert("delete_file".to_string(), Decision::Deny);
+        let mut policy = Policy::default();
+        policy.mcp.servers.insert(
+            "filesystem".to_string(),
+            McpServerPolicy {
+                tools,
+                ..McpServerPolicy::default()
+            },
+        );
+
+        let decision = decide(
+            &policy,
+            McpAccessRequest {
+                server: "filesystem".to_string(),
+                kind: "tool".to_string(),
+                name: "delete_file".to_string(),
+                arguments: json!({ "api_key": "sk-test" }),
+            },
+        );
+
+        assert_eq!(decision.decision.decision, Decision::Deny);
+        assert_eq!(decision.decision.risk, Risk::Critical);
+        assert!(decision.decision.reason.contains("MCP argument inspection"));
     }
 
     #[test]

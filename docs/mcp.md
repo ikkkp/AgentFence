@@ -14,6 +14,23 @@ The current code implements decision primitives, a stdio proxy, and a scoped HTT
 agentfence mcp check --server github --kind tool --name merge_pull_request
 ```
 
+Simulate a call with arguments:
+
+```bash
+agentfence mcp check \
+  --server github \
+  --kind tool \
+  --name list_issues \
+  --arguments-json '{"api_key":"sk-test"}'
+```
+
+On Windows, place complex arguments in a file to avoid shell quoting issues:
+
+```powershell
+Set-Content -Encoding UTF8 .\mcp-arguments.json '{"api_key":"sk-test"}'
+agentfence mcp check --server github --kind tool --name list_issues --arguments-file .\mcp-arguments.json
+```
+
 Example response:
 
 ```json
@@ -26,9 +43,13 @@ Example response:
   },
   "decision": {
     "decision": "deny",
-    "reason": "matched MCP tool policy for github/merge_pull_request",
+    "reason": "matched MCP tool policy for github/merge_pull_request; MCP argument inspection: tool name suggests high-impact operation",
     "matchedRule": "mcp.servers.github.tools.merge_pull_request",
-    "risk": "medium"
+    "risk": "high"
+  },
+  "argumentInspection": {
+    "risk": "high",
+    "findings": ["tool name suggests high-impact operation"]
   }
 }
 ```
@@ -53,6 +74,10 @@ The proxy inspects client-to-server JSON-RPC messages:
 Allowed requests are forwarded to the upstream server. Denied requests receive a JSON-RPC error response and never reach upstream.
 
 Each inspected call writes an audit event when policy audit logging is enabled. The event subject is `server/name`, the action is `mcp.tool`, `mcp.resource`, or `mcp.prompt`, and metadata includes the MCP arguments.
+
+Arguments are inspected before forwarding. Secret-looking keys or values, sensitive paths such as `~/.ssh` and `.env`, production/release context, and high-impact tool names are recorded under `argumentInspection` in approval and audit metadata. If an explicitly allowed MCP call has high or critical argument findings, the proxy upgrades the decision to `ask` before forwarding.
+
+`mcp check` redacts secret-like argument keys and values in its printed output. The proxy forwards the original allowed request only after policy and approval checks pass.
 
 `ask` decisions default to deny in stdio proxy mode:
 
