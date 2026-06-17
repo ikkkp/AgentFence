@@ -9,7 +9,7 @@ AgentFence is a local-first permission gateway for Claude Code, Codex, and custo
 This repository now contains the first implementation slice from the roadmap:
 
 - Rust workspace with CLI, daemon, policy, shell classifier, MCP decision, and audit crates.
-- `agentfence` CLI with policy initialization, validation, daemon lifecycle controls, shell checks, guarded command execution, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
+- `agentfence` CLI with policy initialization, validation, daemon lifecycle controls, shell checks, guarded command execution, guarded shell and PTY shell modes, simulation, integration profiles, MCP checks, MCP stdio and HTTP JSON-RPC proxying, MCP rate limits, and audit log reads.
 - `agentfenced` local HTTP daemon with health, shutdown, policy, approval queue, audit, shell check, filesystem, network, skill, and MCP check endpoints.
 - `agentfence.policy.json` plus schema and Codex/Claude Code examples.
 - Tauri + React desktop UI shell for dashboard, approvals, policy preview, policy diff review, audit, MCP, and skill controls.
@@ -55,6 +55,12 @@ Run a guarded command:
 
 ```bash
 cargo run --bin agentfence -- run -- git status --short
+```
+
+Run a guarded PTY shell:
+
+```bash
+cargo run --bin agentfence -- shell --pty --actor codex
 ```
 
 Read audit logs:
@@ -125,6 +131,7 @@ agentfence check -- git status
 agentfence simulate shell -- git status https://transfer.sh/file
 agentfence run -- git status --short
 agentfence shell --actor codex
+agentfence shell --pty --actor codex
 agentfence run --actor codex -- codex
 agentfence run --actor claude-code -- claude
 agentfence integrations list
@@ -150,7 +157,7 @@ agentfence mcp http-proxy --server github --upstream http://127.0.0.1:3000/mcp
 
 ## Security Model
 
-AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, provides a line-oriented guarded shell through `agentfence shell`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC and GET/SSE streams through `agentfence mcp http-proxy`. Full PTY interception, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
+AgentFence does not rely on an agent prompt as the security boundary. The policy engine evaluates requests before execution or forwarding. The current implementation enforces commands launched through `agentfence run`, provides a line-oriented guarded shell through `agentfence shell`, offers a PTY-backed guarded shell MVP through `agentfence shell --pty`, checks URL-like and common Git/SSH remotes in guarded commands against network policy, and enforces MCP stdio calls through `agentfence mcp proxy` plus scoped HTTP JSON-RPC and GET/SSE streams through `agentfence mcp http-proxy`. Raw-mode PTY input brokering, full network proxying, and OS-level filesystem controls remain roadmap hardening items.
 
 Audit events redact common secret shapes such as `token=...`, `password=...`, GitHub personal access tokens, OpenAI-style `sk-...` tokens, and AWS access key IDs before writing command subjects, reasons, and metadata strings to SQLite.
 

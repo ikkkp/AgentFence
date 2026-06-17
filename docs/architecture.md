@@ -97,17 +97,18 @@ Policy bundles are portable team-policy artifacts. They include the policy body,
 
 ## Current Enforcement Boundary
 
-The current implementation enforces shell commands launched through `agentfence run` and commands typed into the line-oriented guarded shell `agentfence shell`. This is useful for explicit wrapper flows and for interactive local sessions where every entered command should be checked:
+The current implementation enforces shell commands launched through `agentfence run`, commands typed into the line-oriented guarded shell `agentfence shell`, and submitted lines in the PTY-backed shell MVP `agentfence shell --pty`. This is useful for explicit wrapper flows and for interactive local sessions where every entered command should be checked:
 
 ```bash
 agentfence run -- codex
 agentfence run -- claude
 agentfence run -- npm test
 agentfence shell --actor codex
+agentfence shell --pty --actor codex
 ```
 
 The initial MCP stdio proxy is available through `agentfence mcp proxy`, and a scoped HTTP JSON-RPC/SSE proxy is available through `agentfence mcp http-proxy`. They inspect client-to-server JSON-RPC calls for `tools/call`, `resources/read`, and `prompts/get`, then block denied or rate-limited requests before they reach the upstream server. They also track `tools/list`, `resources/list`, and `prompts/list` requests so denied entries can be filtered out of complete upstream JSON list responses, chunked JSON list responses, and JSON-RPC responses carried in SSE `data:` events. The HTTP proxy passes through GET/SSE and other streaming responses after request-level checks.
 
-Guarded shell commands also extract URL-like arguments and common Git/SSH remotes, then evaluate those domains against `network` policy before execution. Future milestones should add full PTY interception, external tool broker adapters, deeper filtering for open-ended non-JSON MCP streams, and optional OS-level or proxy-level network/filesystem controls.
+Guarded shell commands also extract URL-like arguments and common Git/SSH remotes, then evaluate those domains against `network` policy before execution. The PTY shell uses a real pseudo-terminal child process and a small terminal-query response broker, but still checks submitted command lines rather than raw key events. Future milestones should add raw-mode PTY brokering for full-screen TUI programs, external tool broker adapters, deeper filtering for open-ended non-JSON MCP streams, and optional OS-level or proxy-level network/filesystem controls.
 
-The shell classifier is intentionally conservative around commands that can hide or amplify follow-up actions. Nested shell execution (`bash -lc`, `cmd /c`, `powershell -Command`, `node -e`, `python -c`), encoded PowerShell, package publishing, infrastructure apply/destroy commands, and repository history rewrites are elevated before policy matching. This improves wrapper-mode safety while the full PTY interception design remains open.
+The shell classifier is intentionally conservative around commands that can hide or amplify follow-up actions. Nested shell execution (`bash -lc`, `cmd /c`, `powershell -Command`, `node -e`, `python -c`), encoded PowerShell, package publishing, infrastructure apply/destroy commands, and repository history rewrites are elevated before policy matching. This improves wrapper-mode and PTY-MVP safety while the deeper raw terminal interception design remains open.

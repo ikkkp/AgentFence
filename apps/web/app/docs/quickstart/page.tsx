@@ -21,10 +21,12 @@ agentfence logs`}</pre>
       <pre>{`agentfence shell --actor codex
 agentfence> git status --short
 agentfence> npm install
-agentfence> exit`}</pre>
+agentfence> exit
+
+agentfence shell --pty --actor codex`}</pre>
       <p>
-        The guarded shell checks each entered command before execution. It is line-oriented; full PTY
-        interception remains a later hardening item.
+        The guarded shell checks each entered command before execution. The PTY mode starts a real
+        pseudo-terminal child shell and checks submitted command lines before forwarding them.
       </p>
       <h2>Start an agent</h2>
       <pre>{`agentfence run --actor codex -- codex

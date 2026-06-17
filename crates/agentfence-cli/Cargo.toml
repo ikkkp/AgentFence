@@ -19,4 +19,5 @@ agentfence-shell = { path = "../agentfence-shell" }
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+portable-pty.workspace = true
 serde_json.workspace = true

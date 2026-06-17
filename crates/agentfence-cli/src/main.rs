@@ -25,9 +25,10 @@ use agentfence_policy::{
     suggest_policy_patches, verify_artifact_digest_signature, verify_policy_bundle,
 };
 use agentfence_shell::{classify_command, extract_network_domains};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 #[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x00000008;
@@ -137,6 +138,14 @@ struct ShellArgs {
     audit: Option<PathBuf>,
     #[arg(long, default_value = "agentfence> ")]
     prompt: String,
+    #[arg(long)]
+    pty: bool,
+    #[arg(long)]
+    program: Option<String>,
+    #[arg(long, default_value_t = 24)]
+    rows: u16,
+    #[arg(long, default_value_t = 80)]
+    cols: u16,
 }
 
 #[derive(Debug, Args)]
@@ -949,6 +958,10 @@ fn guard_shell_command(
 }
 
 fn guarded_shell(args: ShellArgs) -> Result<ExitCode> {
+    if args.pty {
+        return guarded_pty_shell(args);
+    }
+
     let stdin = io::stdin();
     let mut input = String::new();
     println!("AgentFence guarded shell. Type exit or quit to leave.");
@@ -1019,6 +1032,184 @@ fn guarded_shell(args: ShellArgs) -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+fn guarded_pty_shell(args: ShellArgs) -> Result<ExitCode> {
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: args.rows,
+            cols: args.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("failed to open pty")?;
+    let program = args.program.clone().unwrap_or_else(default_shell_program);
+    let mut command = CommandBuilder::new(&program);
+    command.cwd(&cwd);
+    command.env("AGENTFENCE_PTY", "1");
+
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .with_context(|| format!("failed to start pty shell {program}"))?;
+    drop(pair.slave);
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .context("failed to clone pty reader")?;
+    let writer = pair
+        .master
+        .take_writer()
+        .context("failed to open pty writer")?;
+    let writer = Arc::new(Mutex::new(writer));
+    let terminal_query_writer = Arc::clone(&writer);
+
+    thread::spawn(move || {
+        let mut stdout = io::stdout();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    let chunk = &buffer[..read];
+                    if contains_terminal_cursor_query(chunk) {
+                        if let Ok(mut writer) = terminal_query_writer.lock() {
+                            let _ = writer.write_all(b"\x1b[1;1R");
+                            let _ = writer.flush();
+                        }
+                    }
+                    let output = strip_terminal_cursor_queries(chunk);
+                    if stdout.write_all(&output).is_err() {
+                        break;
+                    }
+                    if stdout.flush().is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+    println!(
+        "AgentFence PTY shell. Commands are checked before they are written to the PTY. Type exit or quit to leave."
+    );
+
+    loop {
+        input.clear();
+        if stdin
+            .read_line(&mut input)
+            .context("failed to read shell input")?
+            == 0
+        {
+            write_pty_bytes(&writer, b"exit\r\n", "failed to close pty shell")?;
+            thread::sleep(Duration::from_millis(150));
+            break;
+        }
+
+        let line = input.trim();
+        if line.is_empty() {
+            write_pty_bytes(&writer, b"\r\n", "failed to write blank line to pty")?;
+            continue;
+        }
+        if matches!(line, "exit" | "quit") {
+            write_pty_bytes(&writer, b"exit\r\n", "failed to close pty shell")?;
+            thread::sleep(Duration::from_millis(150));
+            break;
+        }
+
+        let command = match parse_shell_line(line) {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("parse error: {error}");
+                continue;
+            }
+        };
+        if command.is_empty() {
+            continue;
+        }
+
+        let outcome = guard_shell_command(
+            &args.actor,
+            args.policy.as_deref(),
+            args.audit.as_deref(),
+            &command,
+        )?;
+        if !outcome.allowed {
+            println!("denied: {}", outcome.command);
+            continue;
+        }
+
+        if is_cd_command(&command) {
+            if let Err(error) = change_directory(&command) {
+                eprintln!("cd: {error}");
+                continue;
+            }
+        }
+
+        write_pty_bytes(&writer, line.as_bytes(), "failed to write command to pty")?;
+        write_pty_bytes(&writer, b"\r\n", "failed to write command newline to pty")?;
+    }
+
+    let started_wait = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().context("failed to poll pty shell")? {
+            break status;
+        }
+        if started_wait.elapsed() >= Duration::from_secs(5) {
+            child.kill().context("failed to terminate pty shell")?;
+            break child.wait().context("failed to wait for pty shell")?;
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    Ok(ExitCode::from(status.exit_code() as u8))
+}
+
+fn write_pty_bytes(
+    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
+    bytes: &[u8],
+    error: &'static str,
+) -> Result<()> {
+    let mut writer = writer
+        .lock()
+        .map_err(|_| anyhow!("pty writer lock poisoned"))?;
+    writer.write_all(bytes).context(error)?;
+    writer.flush().context("failed to flush pty input")
+}
+
+fn contains_terminal_cursor_query(bytes: &[u8]) -> bool {
+    bytes.windows(4).any(|window| window == b"\x1b[6n")
+}
+
+fn strip_terminal_cursor_queries(bytes: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if index + 4 <= bytes.len() && &bytes[index..index + 4] == b"\x1b[6n" {
+            index += 4;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    output
+}
+
+fn default_shell_program() -> String {
+    #[cfg(windows)]
+    {
+        env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    }
 }
 
 fn parse_shell_line(input: &str) -> Result<Vec<String>> {
@@ -5061,6 +5252,17 @@ mod tests {
     fn detects_cd_command_case_insensitively() {
         assert!(is_cd_command(&["CD".to_string(), "..".to_string()]));
         assert!(!is_cd_command(&["pwd".to_string()]));
+    }
+
+    #[test]
+    fn handles_terminal_cursor_queries_for_pty_output() {
+        let output = b"before\x1b[6nafter\x1b[6n";
+
+        assert!(contains_terminal_cursor_query(output));
+        assert_eq!(
+            strip_terminal_cursor_queries(output),
+            b"beforeafter".to_vec()
+        );
     }
 
     #[test]

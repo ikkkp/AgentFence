@@ -34,10 +34,10 @@ AgentFence Daemon
       </ul>
       <h2>Current enforcement boundary</h2>
       <p>
-        Shell enforcement applies when commands are launched through `agentfence run` or typed into
-        `agentfence shell`. MCP enforcement applies when clients route stdio or HTTP MCP servers through
-        AgentFence proxies. Full PTY interception, full network proxying, and OS-level filesystem controls
-        remain hardening milestones.
+        Shell enforcement applies when commands are launched through `agentfence run`, typed into
+        `agentfence shell`, or submitted in the PTY-backed `agentfence shell --pty` MVP. MCP enforcement
+        applies when clients route stdio or HTTP MCP servers through AgentFence proxies. Raw-mode PTY
+        brokering, full network proxying, and OS-level filesystem controls remain hardening milestones.
       </p>
       <p>
         The local daemon can be managed with `agentfence daemon start`, `agentfence daemon status`,

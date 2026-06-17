@@ -35,6 +35,7 @@ cargo run --bin agentfence -- daemon status
 cargo run --bin agentfence -- daemon stop
 cargo run --bin agentfence -- approvals list
 cargo run --bin agentfence -- shell --actor codex
+cargo run --bin agentfence -- shell --pty --actor codex
 cargo run --bin agentfence -- filesystem check --operation read --path ~/.ssh/id_rsa
 cargo run --bin agentfence -- network check --domain github.com
 cargo run --bin agentfence -- skill check --name code-review
