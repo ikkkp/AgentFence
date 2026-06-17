@@ -38,8 +38,6 @@ jobs:
         with:
           version: 10.32.1
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Build web
