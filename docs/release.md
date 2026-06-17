@@ -16,6 +16,12 @@ pnpm typecheck
 pnpm build
 ```
 
+Then run the product smoke suite:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1
+```
+
 Build local release binaries:
 
 ```bash
@@ -62,7 +68,16 @@ Generate a local checksum manifest for staged artifacts:
 .\packaging\release-manifest.ps1 -ArtifactPath .\dist\agentfence-windows-x64.zip -Output .\dist\agentfence-windows-x64.checksums.json
 ```
 
+Package the local CLI and daemon release archive with the same staging layout used by CI:
+
+```powershell
+cargo build --release --bin agentfence --bin agentfenced
+.\packaging\package-cli.ps1 -Name windows-x64 -ExeSuffix .exe -Version v0.1.0 -Repository ikkkp/AgentFence -Commit (git rev-parse HEAD)
+```
+
 Each manifest records the release version, repository, commit, artifact size, and SHA256 digest. These manifests are not a replacement for future certificate-backed signing or notarization, but they give users a deterministic checksum to compare after download.
+
+Tag-triggered release builds attach CLI archives, checksum manifests, and desktop bundles to the GitHub release automatically.
 
 After downloading a CLI archive, users can install the binaries onto PATH:
 

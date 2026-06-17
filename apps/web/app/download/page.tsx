@@ -9,6 +9,12 @@ export default function DownloadPage() {
         Tagged releases produce CLI, daemon, and desktop artifacts. Until the first public release is
         attached on GitHub, build from source and run the local control plane directly.
       </p>
+      <p>
+        Release artifacts are published on{" "}
+        <a href="https://github.com/ikkkp/AgentFence/releases">GitHub Releases</a>. Download the
+        archive for your platform, verify the `.checksums.json` manifest, then run the installer from
+        the extracted archive.
+      </p>
       <pre>{`git clone https://github.com/ikkkp/AgentFence.git
 cd AgentFence
 cargo run --bin agentfence -- policy validate agentfence.policy.json`}</pre>
