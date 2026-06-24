@@ -39,7 +39,7 @@ jobs:
             -Version "${{ github.ref_name }}" `
             -Repository "${{ github.repository }}" `
             -Commit "${{ github.sha }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agentfence-${{ matrix.name }}
           path: |
@@ -81,7 +81,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build desktop bundle
         run: pnpm --filter @agentfence/desktop tauri:build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agentfence-desktop-${{ matrix.name }}
           path: |
